@@ -54,6 +54,10 @@ Python standard library.
   code or posts to the tracker unless you ask. It also has a verify-fix mode.
 - **`finding-verifier` subagent**: an independent skeptic that tries to disprove
   each High/Medium review finding. `review-changes` runs it automatically.
+- **`record-feature` skill + `browser-recorder` subagent**: records a feature
+  walkthrough from the current worktree, including uncommitted changes. Uses local
+  Playwright scripts to save video, milestone screenshots, and checked outcomes;
+  no browser MCP required. Browser evals are documented in `evals/README.md`.
 - **MCP servers** (`mcp/`): **CodeGraph** (code-intelligence graph; needs the
   `codegraph` CLI, and answers only in projects indexed with `codegraph init`) and
   **Context7** (current library docs; works without a key at a lower rate limit).

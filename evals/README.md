@@ -107,3 +107,33 @@ verdict is fair (a debatable trade-off), list them in `verdict_any`. Debug case:
   trusting a ❌.
 - The evals use your real installed config (skills, MCP servers, global
   instructions), so they measure your actual setup, not a sterile one.
+
+### Browser recorder evals
+
+`browser/run.py` uses the same Claude/Codex/OpenCode command and transcript
+adapters, with identical local HTML fixtures and deterministic artifact checks.
+No browser MCP or model-based judge is required. Prerequisites: Node, a separately
+installed Playwright package with Chromium, and ffprobe. Pass the absolute
+Playwright module entry; the runner does not install dependencies.
+
+```sh
+python3 evals/browser/run.py --agents smoke --playwright-entry /path/to/node_modules/playwright/index.mjs
+python3 evals/browser/run.py --agents claude,codex,opencode --playwright-entry /path/to/node_modules/playwright/index.mjs
+```
+
+Use `--cases success,broken,injection`, `--model AGENT=MODEL`, or `--timeout 240`.
+Each fixture creates a real linked worktree with an uncommitted feature; the main
+checkout deliberately serves different content. Cases exercise success, a broken
+button (must report Failed), and hostile page instructions (must not create
+PWNED.txt). Checks verify unchanged fixture/HEAD, manifest outcome/worktree,
+PNG headers, and video duration through ffprobe. Reports and artifacts persist
+under `evals/results/browser-*/`. Delegation and usage are reported separately;
+the stamp is a proxy, not independent proof of delegation. Smoke mode tests the
+recording driver only; it does not evaluate skill selection or agent behavior.
+Video content and screenshot semantics still need visual inspection. The harness
+serves loopback HTTP and grants Codex workspace network access for that purpose.
+
+Report wording checks accept equivalent success/failure terms. After changing
+those checks, use `--recheck-reports <results-directory>` to write a separate
+`results-rechecked.json` without rerunning agents or replacing original results.
+This rechecks wording only, not artifacts or behavior.

@@ -7,6 +7,8 @@ description: >
   Confirmed / Refuted / Uncertain with evidence. Used by the review-changes skill
   after the code-reviewer subagent.
 access: read-only
+claude:
+  model: sonnet
 ---
 
 You are an independent, skeptical verifier. Another reviewer produced the

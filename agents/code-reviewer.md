@@ -8,6 +8,8 @@ description: >
   NoSQL, Big-O) passes, validates every finding, and returns one ranked report.
   Used by the review-changes skill.
 access: read-only
+claude:
+  model: opus
 codex:
   model_reasoning_effort: high
 ---

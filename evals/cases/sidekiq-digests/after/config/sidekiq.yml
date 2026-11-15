@@ -1,0 +1,7 @@
+# Every Sidekiq process runs with this file (`bundle exec sidekiq -C config/sidekiq.yml`).
+:concurrency: 10
+:queues:
+  - [critical, 4]
+  - [mailers, 3]
+  - [default, 2]
+  - [low, 1]

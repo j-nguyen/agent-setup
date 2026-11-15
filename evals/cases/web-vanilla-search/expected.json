@@ -1,0 +1,69 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "no-debounce-race",
+      "pass": "spec/performance",
+      "file": "src/search.js",
+      "summary": "Every input event calls the API immediately (no debounce), and responses aren't cancelled or checked against the latest query (searchProducts supports an AbortSignal, but it's unused), so a slow older response can overwrite newer results. Breaks requirement 1: debounce and abort/ignore stale requests."
+    },
+    {
+      "id": "innerhtml-append-xss",
+      "pass": "performance/security",
+      "file": "src/search.js",
+      "summary": "renderResults does list.innerHTML += \u2026 inside the loop, re-serializing and re-parsing the whole list for every product (O(n\u00b2) for 500 results, a long main-thread task). It also interpolates seller-controlled p.name (and imageUrl) into HTML unescaped, which is stored XSS (requirement 4). Build nodes (textContent) or one escaped string / DocumentFragment."
+    },
+    {
+      "id": "scroll-handler",
+      "pass": "performance",
+      "file": "src/search.js",
+      "summary": "The scroll listener runs on every scroll event (not throttled, not passive), queries all images and calls getBoundingClientRect on each, forcing layout repeatedly during scrolling (requirement 2). Use loading=\"lazy\" or an IntersectionObserver."
+    },
+    {
+      "id": "layout-thrash",
+      "pass": "performance",
+      "file": "src/search.js",
+      "summary": "The equal-height loop alternates a style write (height = auto) and a layout read (offsetHeight) per card, forcing a synchronous reflow for each of up to 500 cards. Batch writes then reads, or use CSS (grid rows / align-items: stretch) for requirement 5."
+    },
+    {
+      "id": "image-dimensions-cls",
+      "pass": "spec/performance",
+      "file": "src/search.js",
+      "summary": "Images get a 1x1 placeholder with no width/height (imageWidth/imageHeight are ignored), so each card's height jumps when the real image loads: layout shift, against requirement 3. Set width/height or aspect-ratio."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "initial-images-never-load",
+      "pass": "bug",
+      "file": "src/search.js",
+      "summary": "Images already in view after a search keep the placeholder until the user scrolls, because the lazy-loader only runs on scroll events."
+    },
+    {
+      "id": "listener-accumulates",
+      "pass": "bug",
+      "file": "src/search.js",
+      "summary": "mountSearch adds a window scroll listener that's never removed; mounting twice duplicates it."
+    },
+    {
+      "id": "error-handling",
+      "pass": "bug",
+      "file": "src/search.js",
+      "summary": "A failed search rejects inside the input handler and the status stays at 'Searching\u2026'."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "encode-uri",
+      "summary": "encodeURIComponent on the query in api.js is correct; NOT an injection."
+    },
+    {
+      "id": "status-textcontent",
+      "summary": "Writing the status with textContent is correct and safe."
+    },
+    {
+      "id": "static-template",
+      "summary": "The initial root.innerHTML template is a static string with no user data; NOT XSS."
+    }
+  ]
+}

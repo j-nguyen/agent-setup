@@ -1,0 +1,24 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "key-missing-tenant", "pass": "security/spec", "file": "src/profiles.ts",
+     "summary": "Requirement 2 broken: the cache key is only userId, so tenant B's getProfile for the same userId returns tenant A's cached profile (cross-tenant data leak). The key must include tenantId."},
+    {"id": "invalidate-before-write", "pass": "spec/bug", "file": "src/profiles.ts",
+     "summary": "Requirement 4 broken: updateProfile deletes the cache entry before awaiting store.update. A concurrent getProfile in between reads the old row and re-caches it, so reads return the stale profile for up to 5 minutes after the update resolves. Invalidate (or set) after the write."},
+    {"id": "misses-never-expire", "pass": "spec/bug", "file": "src/profiles.ts",
+     "summary": "Requirement 3 broken: not-found results go into a plain Set with no TTL (MISS_TTL_MS is unused), so a user created later is reported missing forever (until updateProfile or a restart). The Set is also unbounded."},
+    {"id": "shared-mutable", "pass": "spec/bug", "file": "src/profiles.ts",
+     "summary": "Requirement 5 broken: the cached Profile object itself is returned (and the object from the store is cached), so a caller mutating it changes what every other caller sees. Clone on get or on set."}
+  ],
+  "nice_to_find": [
+    {"id": "clear-helper-wrong", "pass": "bug", "file": "src/profiles.ts",
+     "summary": "clearProfileCache only deletes cache keys that are in notFound (keys that are never in the cache), so it doesn't clear cached profiles; tests can leak state between cases."},
+    {"id": "tests-miss-bugs", "pass": "testing", "file": "src/profiles.test.ts",
+     "summary": "Tests don't cover multiple tenants, miss expiry, concurrent read/update, or mutation of the returned object."}
+  ],
+  "must_not_flag": [
+    {"id": "fifo-eviction", "summary": "Evicting the first Map key is correct FIFO/oldest eviction because set() re-inserts; not a bug."},
+    {"id": "stampede", "summary": "Duplicate concurrent loads for the same key (cache stampede / no single-flight) are explicitly acceptable per requirement 6."},
+    {"id": "date-now", "summary": "Using Date.now (injectable) for expiry is fine."}
+  ]
+}

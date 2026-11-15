@@ -96,8 +96,10 @@ def agent_cmd(agent: str, prompt: str, repo: Path, out_dir: Path, model: str | N
     if agent == "codex":
         # Codex's sandbox blocks network by default; --tracker runs need it to reach the mock API.
         net = ["-c", "sandbox_workspace_write.network_access=true"] if debug and getattr(_ARGS, "tracker", None) else []
+        # No --ephemeral: Codex can't spawn subagents without the parent session's rollout
+        # ("collab spawn failed: ... no rollout found for thread id"), so ephemeral runs
+        # silently fall back to reviewing inline.
         cmd = ["codex", "exec", "--json", *net, "--sandbox", "workspace-write" if debug else "read-only",
-               "--ephemeral",
                "--skip-git-repo-check", "-C", str(repo),
                "-o", str(out_dir / "report.md"), prompt]
         return cmd[:2] + (["-m", model] if model else []) + cmd[2:]
@@ -145,8 +147,12 @@ def usage_summary(agent: str, raw: str) -> dict:
         except (json.JSONDecodeError, ValueError):
             continue
         if agent == "claude" and e.get("type") == "result":
+            mu = (e.get("modelUsage") or {}).values()
             out = {"cost_usd": e.get("total_cost_usd"), "turns": e.get("num_turns"),
-                   "is_error": e.get("is_error")}
+                   "is_error": e.get("is_error"),
+                   "input_tokens": sum((m.get("inputTokens") or 0) + (m.get("cacheReadInputTokens") or 0)
+                                       + (m.get("cacheCreationInputTokens") or 0) for m in mu),
+                   "output_tokens": sum(m.get("outputTokens") or 0 for m in mu)}
         if agent == "codex" and e.get("type") == "turn.completed":
             u = e.get("usage") or {}
             out["input_tokens"] = out.get("input_tokens", 0) + (u.get("input_tokens") or 0)
@@ -277,6 +283,27 @@ def run_judge(judge: str, expected: dict, report: str, workdir: Path, model: str
     return parse_json_obj(text)
 
 
+def missing_ids(expected: dict, grade: dict) -> list[str]:
+    """Answer-key items the judge left out of its grade (it sometimes drops one)."""
+    out = []
+    for key in ("must_find", "nice_to_find", "must_not_flag"):
+        got = {g.get("id") for g in grade.get(key, [])}
+        out += [i["id"] for i in expected.get(key, []) if i["id"] not in got]
+    return out
+
+
+def judge_complete(judge: str, expected: dict, report: str, workdir: Path, model: str | None) -> dict:
+    """Grade, and re-ask once if the judge skipped answer-key items, so a skipped item
+    isn't scored as a miss. Items still missing after that are recorded in `missing_ids`."""
+    grade = run_judge(judge, expected, report, workdir, model)
+    if missing_ids(expected, grade):
+        retry = run_judge(judge, expected, report, workdir, model)
+        if len(missing_ids(expected, retry)) < len(missing_ids(expected, grade)):
+            grade = retry
+    grade["missing_ids"] = missing_ids(expected, grade)
+    return grade
+
+
 def verdict_matches(reported: str, allowed: list[str]) -> bool:
     v = " ".join(reported.lower().replace("*", "").split())
     for a in allowed:
@@ -296,7 +323,7 @@ def score(expected: dict, grade: dict, verdict_expected: str) -> dict:
     other = grade.get("other_findings", [])
     found = sum(1 for m in must if m.get("found"))
     v = (grade.get("verdict_reported") or "").lower()
-    if expected.get("kind") == "debug":
+    if expected.get("verdict_any"):  # debug cases, and reviews where several verdicts are fine
         verdict_ok = verdict_matches(v, expected["verdict_any"])
     elif "changes requested" in verdict_expected.lower():
         verdict_ok = "changes requested" in v
@@ -311,6 +338,7 @@ def score(expected: dict, grade: dict, verdict_expected: str) -> dict:
         "other_invalid": sum(1 for o in other if not o.get("valid")),
         "verdict_ok": verdict_ok,
         "format_ok": bool(grade.get("format_ok")),
+        "judge_missing": grade.get("missing_ids", []),
     }
 
 
@@ -384,6 +412,7 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
     report = extract_report(agent, raw, out_dir)
     (out_dir / "report.md").write_text(report)
     result = {
+        "report_chars": len(report),
         "case": case.name, "agent": agent, "trial": trial, "exit": code,
         "seconds": round(elapsed),
         "used_skill": bool(skill_re("debug-ticket" if debug else "review-changes").search(raw)),
@@ -402,7 +431,7 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
         return result
     if not args.no_judge:
         try:
-            grade = run_judge(args.judge, expected, report, out_dir, args.judge_model)
+            grade = judge_complete(args.judge, expected, report, out_dir, args.judge_model)
             (out_dir / "grade.json").write_text(json.dumps(grade, indent=2))
             result["score"] = score(expected, grade, expected.get("verdict", ""))
         except Exception as e:  # keep the run even if grading fails
@@ -413,14 +442,21 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
     return result
 
 
+def _tok(r: dict) -> str:
+    u = r.get("usage") or {}
+    k = lambda n: f"{(n or 0) / 1000:.0f}k"  # noqa: E731
+    return f"{k(u.get('input_tokens'))}/{k(u.get('output_tokens'))}" + (
+        f" ${u['cost_usd']:.2f}" if u.get("cost_usd") else "")
+
+
 def fmt_summary(results: list[dict], args) -> str:
     lines = [f"# review-changes eval — {datetime.now():%Y-%m-%d %H:%M}", "",
              f"Judge: `{args.judge}`{' (' + args.judge_model + ')' if args.judge_model else ''}. "
              f"Prompt: {'explicit skill' if args.explicit else 'natural language'}. "
              f"Models: {json.dumps(args.models) if args.models else 'each tool default'}.", "",
              "| case | agent | trial | must-find | nice | decoys flagged | other valid/invalid | "
-             "verdict | format | skill | delegated | verified/fetched | safe | time |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "verdict | format | skill | delegated | verified/fetched | safe | time | tokens in/out | report chars |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda r: (r["case"], r["agent"], r["trial"])):
         s = r.get("score")
         if not s:
@@ -433,7 +469,7 @@ def fmt_summary(results: list[dict], args) -> str:
             f"{s['decoys_flagged']} | {s['other_valid']}/{s['other_invalid']} | {yn(s['verdict_ok'])} | "
             f"{yn(s['format_ok'])} | {yn(r['used_skill'])} | {yn(r['delegated'])} | "
             f"{yn(r.get('verified'))} | "
-            f"{yn(not r['repo_modified'])} | {r['seconds']}s |")
+            f"{yn(not r['repo_modified'])} | {r['seconds']}s | {_tok(r)} | {r.get('report_chars', '')} |")
     lines += ["", "## Totals per agent", "",
               "| agent | runs | must-find recall | decoys flagged | invalid extra findings | "
               "verdict correct | delegated |", "|---|---|---|---|---|---|---|"]
@@ -506,7 +542,7 @@ def regrade(run_dir: Path, args) -> int:
         if not report.strip():
             continue
         expected = json.loads((CASES / r["case"] / "expected.json").read_text())
-        grade = run_judge(args.judge, expected, report, out_dir, args.judge_model)
+        grade = judge_complete(args.judge, expected, report, out_dir, args.judge_model)
         (out_dir / f"grade-{args.judge}.json").write_text(json.dumps(grade, indent=2))
         r["score"] = score(expected, grade, expected.get("verdict", ""))
         r.pop("error", None)

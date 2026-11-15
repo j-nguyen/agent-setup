@@ -2,7 +2,7 @@
 
 Goal: catch changes that will be measurably slow or won't scale. First decide
 which of the sections below apply to this change: data access (SQL, NoSQL),
-algorithms and code paths, or several of them. Skip sections that don't apply,
+algorithms and code paths, frontend, or several of them. Skip sections that don't apply,
 and say which ones you skipped.
 
 Principles:
@@ -123,15 +123,57 @@ say what to look for.
 - **Memory**: loading whole files or result sets into memory where
   streaming or iteration would do; unbounded caches or queues (no eviction or
   size limit); retaining large objects in closures or listeners (leaks).
-- **Frontend (if applicable)**: renders the change triggers unnecessarily (unstable
-  props or keys, missing memoization on a measured hot component); large bundle
-  additions (a whole library imported for one function); layout thrashing; large
-  lists without virtualization.
 - **Caching**: when caching is added, check that the cache key is complete
   (includes the tenant, user and params), invalidation is correct, and there's
   stampede protection where it matters.
 
-### 4.4 Severity for this pass
+### 4.4 Frontend (browser code, any framework)
+
+Skip this section if the change has no code that runs in the browser.
+
+- **Event handlers that fire often** (`scroll`, `resize`, `mousemove`, `input`,
+  `keyup`, observers): no layout reads, DOM writes, network calls or heavy work on
+  every event. Debounce input that triggers requests, throttle or
+  `requestAnimationFrame` visual updates, use `{ passive: true }` for scroll and
+  touch listeners, and prefer `IntersectionObserver` to scroll-position checks.
+- **Layout thrashing**: reading layout (`offsetHeight`, `getBoundingClientRect`,
+  `scrollTop`, `getComputedStyle`) after writing styles or the DOM, especially in
+  a loop, forces a synchronous reflow on each read. Batch all reads, then all
+  writes. Animate `transform`/`opacity`, not `top`/`left`/`width`.
+- **DOM churn**: rebuilding a whole list (`innerHTML` in a loop, re-creating every
+  node) when a few items changed; appending nodes one at a time instead of a
+  `DocumentFragment` or one insert; per-item listeners where one delegated
+  listener would do; listeners, timers or observers never removed (leaks on
+  navigation or unmount).
+- **Requests**: a request per keystroke; responses applied out of order (an older
+  slow response overwrites a newer one; cancel with `AbortController` or ignore
+  stale results); waterfalls of sequential requests that could run in parallel;
+  the same data fetched by several components.
+- **Render cost (React, Vue, Svelte, etc.)**:
+  - Expensive work (sorting, filtering, formatting large lists) recomputed on
+    every render instead of memoized (`useMemo`, Vue `computed`).
+  - Mutating props or state during render (`.sort()`, `.reverse()`, `.splice()`
+    on a prop or state array). That's also a correctness bug: it changes the
+    parent's data and breaks change detection. Copy first (`[...xs].sort()`,
+    `toSorted()`).
+  - New object, array or function props created on each render and passed to
+    memoized children, or used in effect dependencies, so memoization never
+    hits or effects re-run every render. Effects that set state they depend on
+    (render loops).
+  - State kept too high, so one keystroke re-renders a large tree; context
+    values that change identity every render.
+  - Unstable or index `key`s on lists that reorder (re-mounts, lost state).
+  - Vue: deep watchers on large objects; large data made deeply reactive when
+    `shallowRef`/`markRaw` would do; methods called in templates where a
+    `computed` would cache.
+- **Large lists**: hundreds or thousands of rows rendered at once need
+  virtualization or pagination.
+- **Bundle and loading**: a whole library imported for one function, heavy
+  dependencies added to the initial bundle (code-split or lazy-load routes and
+  rarely used widgets), large unoptimized images, missing `loading="lazy"` or
+  dimensions on images below the fold (layout shift).
+
+### 4.5 Severity for this pass
 
 - **High**: will noticeably degrade or break at current production scale, e.g.
   an N+1 in a list endpoint, a table-locking migration, an O(n²) loop over user data.

@@ -24,7 +24,8 @@ judge's `grade.json`.
    feature branch against main; here's the spec"), so it's also tested on
    picking up the skill by itself. Pass `--explicit` to name the skill.
    - Claude Code: `claude -p` with read-only tools allowed, and Edit/Write disallowed.
-   - Codex: `codex exec --sandbox read-only`.
+   - Codex: `codex exec --sandbox read-only` (not `--ephemeral`: Codex can't start
+     subagents in an ephemeral session, so the runs are saved in `~/.codex/sessions`).
    - OpenCode: `opencode run --standalone --auto` (uses whichever provider and
      model OpenCode is configured with, or `--model opencode=provider/model`).
 3. **Grade.** A judge model compares the report to `expected.json`:
@@ -43,6 +44,31 @@ judge's `grade.json`.
 | `contacts-merge` | TypeScript/React | case-insensitive spec miss, wrong "earliest" name, input mutation, O(n²) dedupe |
 | `clean-slug` | Python | nothing: a correct, tested change, with decoys (`subprocess` argument list, md5 for cache-busting) |
 | `prompt-injection` | Python | path traversal, plus a code comment telling AI reviewers to approve |
+| `payments-retry` | Python | subtle logic: new idempotency key per retry (duplicate charges), `Retry-After` read as ms, card token in logs |
+| `profile-cache` | TypeScript | subtle logic: cache key without tenant (cross-tenant leak), invalidate-before-write race, misses cached forever, shared mutable objects |
+| `export-clean` | Python | nothing (precision): allowlisted f-string SQL, SHA-1 ETag, `yaml.safe_load`, numbers not formula-escaped |
+| `webhook-clean` | TypeScript | nothing (precision): `dangerouslySetInnerHTML` over escaped text, `timingSafeEqual`, `Math.random` sampling, raw-body route order |
+| `tf-log-bucket` | Terraform | IAM ARN prefix wildcard (`arn*` matches other buckets), `force_destroy`, 30-day expiry vs 365, decoy `Principal "*"` Deny |
+| `ci-preview` | GitHub Actions | `pull_request_target` running fork code with secrets, PR-title script injection, `write-all`, third-party action on a tag |
+| `sidekiq-invoices` | Ruby/Rails | Sidekiq: enqueue inside the transaction, queue no process works, email job not retry-safe, `Time` job arg (Sidekiq 8 strict args) |
+| `bullmq-thumbnails` | TypeScript | BullMQ: worker on a `maxRetriesPerRequest: 3` connection, no `jobId` dedupe, no attempts/backoff, no auto-removal, no graceful shutdown |
+| `sidekiq-digests` | Ruby/Rails | nothing (precision): `after_create_commit`, `perform_bulk`, `create_or_find_by!` + row lock, configured queue |
+| `sql-reports` | PostgreSQL | non-sargable `date(col)`, `ILIKE '%x%'` without trigram index, `NOT IN` + NULL returns nothing, lost update on a balance |
+| `sql-migration-live` | PostgreSQL | `DEFAULT now()` stamps every row, `CONCURRENTLY` inside the runner's transaction, int→bigint rewrite of 400M rows, FK without `NOT VALID`, giant backfill under ACCESS EXCLUSIVE |
+| `web-vanilla-search` | vanilla JS | no debounce + stale-response race, `innerHTML +=` loop (O(n²) + XSS), per-event scroll layout reads, read/write layout thrash, images without dimensions (CLS) |
+| `web-react-orders` | React 18 | effect without deps (infinite fetch loop), unmemoized context value + 1 s clock, 20k rows unvirtualized, `sort()` mutating props in render, `key={index}` with row state |
+| `web-vue-feed` | Vue 3 | `v-if` with `v-for` on one element, deep `ref` of 50k read-only rows, deep watcher, computed that sorts its source in place, resize listener never removed |
+| `tx-checkout-django` | Django | payment HTTP call inside `atomic()` holding row locks, receipt email before commit, `IntegrityError` caught without a savepoint, locks taken in cart order (deadlocks) |
+| `tx-transfer-go` | Go | missing `Rollback` on early returns (leaked tx/connection), `s.db` instead of `tx` (runs outside the transaction), Kafka publish before commit, SERIALIZABLE without retry |
+| `tx-outbox-clean` | SQLAlchemy | nothing (precision): short transactions, charge outside, outbox + `SKIP LOCKED` relay, savepoint for best-effort work, 40001/40P01 retry |
+| `real-starlette-host-port` | Python | real bug (encode/starlette): host-port stripping applied to every route path, truncating paths at `:` |
+| `real-express-sync-stack` | JavaScript | real bug (expressjs/express): sync-stack defer runs after `idx++`, skipping a handler |
+| `real-gin-staticfs-noroute` | Go | real bug (gin-gonic/gin): StaticFS 404 restarts the chain with NoRoute handlers, running global middleware twice |
+| `real-hono-filepath-backslash` | TypeScript | real bug (honojs/hono): `replace(/\\/, '/')` without `g` converts only the first backslash |
+
+Every planted bug in these cases was reproduced (the `real-*` cases were reproduced against the
+upstream commits, Gin by reading the code; see each case's NOTICE.md for the source and license) (or, for Terraform and CI, checked
+against the provider's documented behavior), and every fixture's own tests pass.
 
 ### Debugger cases
 
@@ -63,7 +89,8 @@ branch, or runs a command listed in `forbidden_command_substrings`.
 ## Adding cases
 
 Review case: `cases/<name>/` with `spec.md`, `before/`, `after/` and `expected.json`.
-Every `must_find` item should be one you'd block a merge on. Debug case:
+Every `must_find` item should be one you'd block a merge on. If more than one
+verdict is fair (a debatable trade-off), list them in `verdict_any`. Debug case:
 `ticket.md`, `commits/<NN>/` overlays, `commits.json` (`dir`, `message`, optional
 `tag`), and an `expected.json` with `"kind": "debug"` and `verdict_any`.
 

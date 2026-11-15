@@ -1,0 +1,31 @@
+{
+  "verdict": "Any verdict. Delivery guarantees around the claim/TTL design are a legitimate trade-off, so findings about them are neither required nor penalized.",
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {
+      "id": "after-create-commit",
+      "summary": "after_create_commit is the correct hook for enqueueing; NOT a 'job may run before commit' bug."
+    },
+    {
+      "id": "perform-bulk",
+      "summary": "perform_bulk with [id, week] arrays (native JSON types) in batches of 1,000 is correct Sidekiq usage, NOT a Redis flood or a bad-argument issue."
+    },
+    {
+      "id": "create-or-find-by",
+      "summary": "create_or_find_by! backed by the unique weekly_digests (user_id, week) index handles the concurrent-duplicate race; NOT a race condition."
+    },
+    {
+      "id": "string-week-arg",
+      "summary": "Passing the week as an ISO8601 string is correct (native JSON type)."
+    },
+    {
+      "id": "mailers-queue",
+      "summary": "The mailers queue is added to config/sidekiq.yml; NOT an unprocessed queue."
+    }
+  ],
+  "verdict_any": [
+    "approve",
+    "changes requested"
+  ]
+}

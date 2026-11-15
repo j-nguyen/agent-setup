@@ -1,0 +1,19 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "colon-in-route-path",
+      "file": "starlette/routing.py",
+      "summary": "compile_path() is shared by Route/Mount/WebSocketRoute paths and Host patterns, but the new `.split(\":\")[0]` at after/starlette/routing.py:149 is applied unconditionally, so every path's trailing literal is truncated at the first colon. `Route(\"/users/{username}:disable\")` compiles to `^/users/(?P<username>[^/]+)$` (matches `/users/tom` and captures username='tom:disable' for `/users/tom:disable`), and `Route(\"/users:batch\")` compiles to `^/users$`. The port stripping must only apply to host patterns (paths start with '/')."
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [],
+  "source": {
+    "repo": "https://github.com/encode/starlette",
+    "license": "BSD-3-Clause",
+    "introduced_by": "7c7ec5a7f72de360bafa938d14e2e1d6f4b6cb69",
+    "fixed_by": "b588ebed36c2934b33ad3b0221d79bd8b7a4817f",
+    "fix_url_or_issue": "https://github.com/encode/starlette/pull/1675 (Fix regression on route names with colons; introduced by https://github.com/encode/starlette/pull/1322)"
+  }
+}

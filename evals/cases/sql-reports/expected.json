@@ -1,0 +1,25 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "non-sargable-date", "pass": "performance", "file": "app/reports.py",
+     "summary": "daily_revenue filters on date(created_at AT TIME ZONE 'UTC') = %s, a function of the column, so orders_created_at_idx can't be used and every call scans the 50M-row table (30 scans per dashboard load). Use a half-open range: created_at >= day AND created_at < day + 1 (UTC)."},
+    {"id": "leading-wildcard", "pass": "performance", "file": "app/reports.py",
+     "summary": "search_customers uses ILIKE '%term%' on email and name with no supporting index (only a btree unique index on email), so each search is a sequential scan of 2M rows, plus a sort by created_at. Needs pg_trgm GIN/GiST indexes on email and name (migration) or a different search approach (requirement 2/6)."},
+    {"id": "not-in-null", "pass": "bug", "file": "app/reports.py",
+     "summary": "customers_never_refunded uses NOT IN (SELECT customer_id FROM refunds), but refunds.customer_id is nullable (guest refunds). One NULL makes NOT IN return no rows at all, so the campaign list is empty. Use NOT EXISTS (or filter customer_id IS NOT NULL)."},
+    {"id": "lost-update", "pass": "bug", "file": "app/reports.py",
+     "summary": "apply_credit reads credit_cents, adds in Python, then writes the absolute value. Two concurrent credits read the same balance and one is lost (READ COMMITTED; no SELECT ... FOR UPDATE). Requirement 5: use UPDATE customers SET credit_cents = credit_cents + %s ... RETURNING credit_cents."}
+  ],
+  "nice_to_find": [
+    {"id": "deep-offset", "pass": "performance", "file": "app/reports.py",
+     "summary": "OFFSET pagination gets slower with page number; keyset pagination on (created_at, id) would be steadier."},
+    {"id": "select-star", "pass": "architecture", "file": "app/reports.py",
+     "summary": "orders_by_id uses SELECT *, coupling callers to the table's columns."}
+  ],
+  "must_not_flag": [
+    {"id": "any-array", "summary": "id = ANY(%s) with a parameterized list is safe and uses the primary key index; NOT SQL injection or a performance problem."},
+    {"id": "ilike-param", "summary": "The ILIKE pattern concatenates a bound parameter ('%%' || %s || '%%'); NOT SQL injection."},
+    {"id": "cte-fence", "summary": "The CTE in customers_never_refunded is NOT an optimization fence (Postgres 12+ inlines non-recursive CTEs referenced once)."},
+    {"id": "coalesce-sum", "summary": "COALESCE(sum(...), 0) is correct; not a problem."}
+  ]
+}

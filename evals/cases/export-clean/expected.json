@@ -1,0 +1,13 @@
+{
+  "verdict": "Approve or Approve with suggestions",
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "fstring-sql", "summary": "The f-string SELECT list is NOT SQL injection: only fixed expressions from the EXPORTABLE allowlist (after validating every requested column) reach the SQL text, and there are no user values in the query."},
+    {"id": "sha1-etag", "summary": "SHA-1 used for the ETag content fingerprint is NOT weak crypto."},
+    {"id": "yaml-load", "summary": "yaml.safe_load on a config file in the repo is NOT unsafe deserialization."},
+    {"id": "numbers-not-escaped", "summary": "Not prefixing negative numbers like -500 is required by spec 3; it is NOT a formula-injection gap (only text cells can carry formulas)."},
+    {"id": "log-contents", "summary": "The export log line (admin id, row count, column names) contains no order or customer data; NOT a data-exposure issue."},
+    {"id": "any-high", "summary": "Any High-severity finding, or a 'Changes requested' verdict: the change is correct, tested and matches the spec."}
+  ]
+}

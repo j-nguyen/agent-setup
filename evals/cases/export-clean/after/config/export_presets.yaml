@@ -1,0 +1,3 @@
+# Saved column lists for the orders export (`?preset=<name>`).
+finance: [id, total_cents, status, created_at]
+support: [id, customer_email, customer_name, status]

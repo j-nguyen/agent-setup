@@ -1,0 +1,69 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "v-if-with-v-for",
+      "pass": "bug",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "v-if and v-for are on the same <li>. In Vue 3, v-if has higher priority than v-for, so `event` is undefined when the v-if is evaluated: the template errors and the Hide logins filter doesn't work. Move the login filter into the computed (or a <template v-for> wrapper)."
+    },
+    {
+      "id": "deep-reactive-big-array",
+      "pass": "performance",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "50k never-edited events are stored in a deep ref, so Vue wraps every object in a reactive proxy (slow, memory-heavy) and every access is tracked. Use shallowRef (or markRaw) for requirement 1/2's read-only data."
+    },
+    {
+      "id": "deep-watch",
+      "pass": "performance",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "watch(events, ..., { deep: true }) traverses all 50k objects on every change (including the sort's in-place reordering), and the deletes count belongs in a computed anyway."
+    },
+    {
+      "id": "computed-mutates-sort",
+      "pass": "bug/performance",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "The matching computed calls events.value.sort(...), mutating its own reactive source inside a computed (a side effect that re-triggers dependents and the deep watcher), and re-sorts 50k items on every keystroke. Sort once on load (or copy), and only filter in the computed."
+    },
+    {
+      "id": "listener-leak",
+      "pass": "spec/bug",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "window resize listener is added in onMounted and never removed (no onUnmounted / onBeforeUnmount), and it keeps the component instance alive. Since the feed mounts and unmounts repeatedly, listeners and components leak (requirement 5)."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "no-virtual-scroller",
+      "pass": "performance",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "All matching rows (up to 50k <li>) are rendered; vue-virtual-scroller is available but unused (requirement 2)."
+    },
+    {
+      "id": "count-ignores-hide-logins",
+      "pass": "spec",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "The 'N events' count uses matching.length, which doesn't apply the Hide logins toggle."
+    },
+    {
+      "id": "fetch-error",
+      "pass": "bug",
+      "file": "src/components/ActivityFeed.vue",
+      "summary": "fetchEvents errors aren't handled in onMounted."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "v-memo",
+      "summary": "v-memo keyed on [event.id, selected] is a valid optimization for these immutable rows; NOT a stale-render bug."
+    },
+    {
+      "id": "v-once-toolbar",
+      "summary": "v-once on the static toolbar is harmless. Calling it redundant (Vue already hoists static content) is a fair Suggestion and does NOT count as flagged; only presenting it as a bug counts."
+    },
+    {
+      "id": "module-formatter",
+      "summary": "Creating the Intl.DateTimeFormat once in setup (not per row) is correct."
+    }
+  ]
+}

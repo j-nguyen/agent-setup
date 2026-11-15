@@ -1,13 +1,15 @@
 ---
 name: review-changes
 description: >
-  Multi-pass code review of a change: an Anthropic-style bug and instruction-file
-  baseline, then spec conformance (does it do what we described?), a security audit,
-  architecture/best practices/readability, and performance (PostgreSQL with
-  EXPLAIN ANALYZE, NoSQL access patterns, Big-O and algorithms). Delegates to the
-  `code-reviewer` subagent. Use when the user asks to review code, a diff, a branch,
-  a PR or a commit, asks "is this ready to merge?", or asks for a security,
-  architecture or performance review of their changes.
+  Use for every request to review code changes, before you read the diff: "review
+  my changes", "review the feature branch against main", "review PR #12", "look
+  over this commit", "is this ready to merge?", "check this before I merge", or a
+  security, architecture or performance review of a change. Also for scoped
+  reviews: "just check security", "only performance", "review only src/payments",
+  "quick review". Use it even for small diffs. Don't review inline. It delegates a multi-pass review to the
+  `code-reviewer` subagent: bug and instruction-file baseline, spec conformance,
+  security audit, architecture/readability, and performance (PostgreSQL EXPLAIN
+  ANALYZE, NoSQL access patterns, Big-O and algorithms).
 ---
 
 # Review changes
@@ -53,7 +55,15 @@ one short question: "What should this change do? Paste the spec or ticket, or sa
 - **Database access for EXPLAIN ANALYZE**: allow it only if the user has said a
   local, dev or test database may be queried, and pass along how to connect
   (e.g. the env var name, *not* the secret value). By default, don't allow it.
-- **Focus**: any areas the user asked to emphasize or skip.
+- **Passes**: all of them by default. If the user asked for only some kinds of
+  review, list just those: `bugs`, `spec`, `security`, `architecture`
+  (design, readability, tests), `performance` (SQL, NoSQL, Big-O, frontend). For
+  example, "just a security review" → `security`; "check perf and SQL" →
+  `performance`. Don't narrow it on your own.
+- **Paths**: if the user asked to review only some files or directories of the
+  target, list them. Otherwise "whole change".
+- **Quick**: if the user asked for a quick review, note it. Step 5 is skipped.
+- **Focus**: anything else the user asked to emphasize or skip.
 
 ## 4. Delegate
 
@@ -66,13 +76,17 @@ Repository: <absolute path>
 Spec (verbatim from user / PR / docs):
 <spec text, or "none provided: infer from the change">
 Database access: <not permitted | permitted: local/dev DB via $ENV_VAR_NAME>
-Focus / skip: <anything the user asked for, or "none">
+Passes: <all | comma list from: bugs, spec, security, architecture, performance>
+Paths: <whole change | the files or directories to limit the review to>
+Focus / skip: <anything else the user asked for, or "none">
 Return the report in the format from your instructions.
 ```
 
 **Always delegate when your tool can start subagents**, even for a small change.
 The `code-reviewer` subagent runs with its own clean context and permissions, which is the
 point of this skill. Don't do the work inline because it looks quick.
+The subagent already has its checklists, so don't open `references/`
+unless you're doing the work yourself (last bullet below).
 
 How to start it depends on your environment:
 - **Claude Code**: the Agent/Task tool with `subagent_type: "code-reviewer"`.
@@ -84,6 +98,11 @@ How to start it depends on your environment:
   `01-spec.md`, `02-security.md`, `03-architecture.md`, `04-performance.md` and
   `report-format.md` from this skill's directory. Stay read-only while you do.
 
+**If starting `code-reviewer` fails**, retry once with the same brief. If it fails
+again, fall back to doing it yourself (the last bullet above) and keep the exact
+error message for the note in the relay step. Only say it failed if a start
+attempt actually returned an error.
+
 For a very large change (roughly 40+ files or 3000+ changed lines), if your tool
 can run subagents in parallel, you may split it into a few coherent slices (by
 module or layer). Run one `code-reviewer` per slice with the same spec, then
@@ -91,7 +110,7 @@ merge the reports, removing duplicate findings.
 
 ## 5. Verify the serious findings
 
-If the report has any **High** or **Medium** findings, start the
+If the report has any **High** findings or **Medium security** findings, start the
 `finding-verifier` subagent (same way as above, agent name `finding-verifier`)
 with this brief:
 
@@ -99,23 +118,26 @@ with this brief:
 Repository: <absolute path>   Review target: <same as above>
 Spec (verbatim): <same as above>
 Findings to verify (verbatim from the report):
-<every High and Medium finding, with its id, severity, location, Problem, Scenario and Fix>
+<every High finding and every Medium security finding, with its id, severity, location, Problem, Scenario and Fix>
 ```
 
-Skip this step when there are no High or Medium findings, or when your tool
-can't start subagents.
+Other Medium findings aren't sent: in our evals the verifier confirmed every
+one, and they don't block a merge on their own. Skip this step when there are
+no High or Medium security findings, when the user asked
+for a quick review, or when your tool can't start subagents. If you skipped it
+for a quick review, say so in one line after the report.
 
 ## 6. Relay the result
 
 - Show the user the subagent's report **verbatim**, from its `# Code review` heading
   to the end. Keep the `**Verdict:**` line and the section headings exactly as
   written. Don't rewrite, summarize, soften or re-rank it, and don't add findings
-  of your own. If you have something to add, such as a pass that couldn't run,
-  put one short line *after* the report.
+  of your own. Don't write an introduction before it. If you have something to
+  add, such as a pass that couldn't run, put one short line *after* the report.
 - **Check the stamp.** The report should end with *Reviewed by the code-reviewer
   subagent.* If it doesn't, because the subagent didn't run or you reviewed
   inline, say so in one line after the report: "Note: this review was done
-  inline, not by the code-reviewer subagent."
+  inline, not by the code-reviewer subagent (starting it failed: <the error>)."
 - **Then add the verifier's `## Independent verification` table**, also verbatim,
   *after* the reviewer's stamp line. Never drop or move the stamp.
   For every finding it **Refuted**, add one line below the table naming the

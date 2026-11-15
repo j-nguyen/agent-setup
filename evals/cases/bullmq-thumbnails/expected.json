@@ -1,0 +1,54 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "worker-connection",
+      "pass": "setup",
+      "file": "src/worker.ts",
+      "summary": "The Worker reuses the web process's ioredis client, which has maxRetriesPerRequest: 3. BullMQ workers need maxRetriesPerRequest: null (it warns or throws otherwise), or blocking commands error out during a Redis blip and the worker stops processing (requirement 6). Give the worker its own connection with maxRetriesPerRequest: null."
+    },
+    {
+      "id": "no-job-id",
+      "pass": "spec",
+      "file": "src/server.ts",
+      "summary": "queue.add has no jobId, so every client retry of the same upload enqueues another thumbnail job (requirement 2). Use a deterministic jobId such as `thumb-${uploadId}` (BullMQ ignores adds with an existing id)."
+    },
+    {
+      "id": "no-retries",
+      "pass": "spec",
+      "file": "src/queues.ts",
+      "summary": "No attempts/backoff are configured (on add or as the queue's defaultJobOptions), so BullMQ's default of a single attempt applies and a transient S3/sharp error fails the job permanently (requirement 3 needs attempts: 5, exponential backoff with a 10 s delay)."
+    },
+    {
+      "id": "no-auto-removal",
+      "pass": "spec",
+      "file": "src/queues.ts",
+      "summary": "No removeOnComplete/removeOnFail, so BullMQ keeps every completed and failed job in Redis forever and memory grows without bound (requirement 4: removeOnComplete { count: 1000 }, removeOnFail { age: 7 days })."
+    },
+    {
+      "id": "no-graceful-shutdown",
+      "pass": "spec",
+      "file": "src/worker.ts",
+      "summary": "The worker doesn't handle SIGTERM (no `await worker.close()`), so a deploy kills jobs mid-flight; they're then treated as stalled and reprocessed, and the worker may pick up new jobs while shutting down (requirement 5)."
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {
+      "id": "queue-shared-connection",
+      "summary": "Using the fail-fast shared connection for the Queue (producer) in the web process is fine; only the Worker needs maxRetriesPerRequest: null."
+    },
+    {
+      "id": "idempotent-processor",
+      "summary": "The processor writes deterministic keys and overwrites them, so rerunning it is safe; NOT a duplicate-side-effect bug."
+    },
+    {
+      "id": "concurrency-4",
+      "summary": "concurrency: 4 for sharp work is a reasonable setting; not a problem."
+    },
+    {
+      "id": "separate-process",
+      "summary": "The worker already runs in its own process via the Procfile; NOT a 'worker in the web process' issue."
+    }
+  ]
+}

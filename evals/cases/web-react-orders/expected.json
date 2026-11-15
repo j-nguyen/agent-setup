@@ -1,0 +1,28 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "effect-no-deps", "pass": "bug/performance", "file": "src/App.tsx",
+     "summary": "The fetch effect has no dependency array, so it runs after every render, and setOrders (plus the clock's setNow every second) causes another render: the dashboard refetches all orders continuously (an infinite fetch loop, since each response is a new array). Requirement 1 needs useEffect(..., [])."},
+    {"id": "context-value-rerenders", "pass": "performance", "file": "src/App.tsx",
+     "summary": "The Provider value is a new object literal on every App render, and App re-renders every second for the clock, so every OrderRow (a context consumer) re-renders every second, up to 20k rows (requirement 4). Memoize the value (useMemo) and/or move the clock into its own component."},
+    {"id": "no-virtualization", "pass": "performance", "file": "src/components/OrdersTable.tsx",
+     "summary": "All visible rows (up to 20k, each with 5 cells) are rendered into the DOM with no virtualization, so every filter keystroke and re-render is slow (requirement 2; @tanstack/react-virtual is available)."},
+    {"id": "sort-mutates-props", "pass": "bug/performance", "file": "src/components/OrdersTable.tsx",
+     "summary": "orders.sort(...) sorts the orders prop in place during render (mutating App's state array) and re-sorts all rows on every render and keystroke without useMemo. The comparator also never returns 0. Copy before sorting and memoize on [orders, sortKey, filter]."},
+    {"id": "index-key", "pass": "bug", "file": "src/components/OrdersTable.tsx",
+     "summary": "Rows use key={i} (the index), but OrderRow keeps `expanded` state. After re-sorting or filtering, the expanded state stays with the position, not the order, so a different order shows as expanded (requirement 3). Use key={order.id}."}
+  ],
+  "nice_to_find": [
+    {"id": "interval-cleanup", "pass": "bug", "file": "src/App.tsx",
+     "summary": "The clock interval is never cleared (no cleanup return); StrictMode's double-invoked effects start two intervals, and it leaks on unmount."},
+    {"id": "filter-deferred", "pass": "performance", "file": "src/components/OrdersTable.tsx",
+     "summary": "Filtering 20k rows on every keystroke could use useDeferredValue/debounce; toLowerCase of the filter is recomputed per row."},
+    {"id": "fetch-errors", "pass": "bug", "file": "src/App.tsx",
+     "summary": "fetchOrders rejection isn't handled (no catch / error state)."}
+  ],
+  "must_not_flag": [
+    {"id": "inline-handlers", "summary": "Inline arrow functions for onClick/onChange on native elements are fine; NOT a performance problem by themselves."},
+    {"id": "module-formatter", "summary": "The Intl.NumberFormat instance created once at module level in api.ts is correct (not recreated per render)."},
+    {"id": "no-react-memo-header", "summary": "Not wrapping small leaf components in React.memo is not a finding by itself."}
+  ]
+}

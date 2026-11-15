@@ -74,6 +74,11 @@ Remember that something exploitable only from the local network can still be HIG
 - Low-impact web issues (tabnabbing, XS-Leaks, prototype pollution, open redirect) only at very
   high confidence.
 - GitHub Actions issues need a concrete attack path that untrusted input can trigger.
+- Hashes used for non-security purposes (cache-busting ids, ETags, dedup keys,
+  checksums) aren't weak crypto, even with MD5 or SHA1. Don't flag them in any
+  pass, and that includes FIPS-compatibility concerns, unless the repo says it
+  must run in FIPS mode. Weak hashes matter for passwords, signatures, tokens
+  and integrity checks against an attacker.
 
 ### 2.5 Bar
 

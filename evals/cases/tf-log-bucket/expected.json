@@ -1,0 +1,23 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "arn-prefix-wildcard", "pass": "security/spec", "file": "infra/iam.tf",
+     "summary": "The PutObject resource is \"${aws_s3_bucket.logs.arn}*\" (no slash), which matches every bucket whose name starts with acme-app-logs-<env> (e.g. acme-app-logs-prod-archive), not just this bucket's objects. Requirement 4 and the least-privilege convention need \"${aws_s3_bucket.logs.arn}/*\"."},
+    {"id": "force-destroy", "pass": "spec", "file": "infra/logs.tf",
+     "summary": "force_destroy = true lets `terraform destroy` (or replacing the bucket) delete the bucket and every log object, against the README rule that production data can't be removed by a plain destroy and the 1-year retention requirement."},
+    {"id": "expiration-30", "pass": "spec", "file": "infra/logs.tf",
+     "summary": "Requirement 2 broken: the lifecycle expires current objects after 30 days, not 365, so logs are deleted after a month. Expiring before the 90-day Glacier transition also makes the rule inconsistent (S3 rejects an expiration earlier than a transition, so apply may fail)."}
+  ],
+  "nice_to_find": [
+    {"id": "noncurrent-30", "pass": "spec", "file": "infra/logs.tf",
+     "summary": "Noncurrent versions expire after 30 days too, so a deleted or overwritten log loses its retained copy well before 1 year."},
+    {"id": "kms-decrypt", "pass": "architecture", "file": "infra/iam.tf",
+     "summary": "Multipart uploads to an SSE-KMS bucket also need kms:Decrypt on the key (only GenerateDataKey is granted); large log uploads can fail."}
+  ],
+  "must_not_flag": [
+    {"id": "deny-principal-star", "summary": "Principal \"*\" in the DenyInsecureTransport statement is correct (a Deny that applies to everyone without TLS); it does NOT make the bucket public."},
+    {"id": "public-access-block", "summary": "Block Public Access has all four settings true; NOT a gap."},
+    {"id": "kms-rotation", "summary": "The KMS key with rotation and a 30-day deletion window is fine."},
+    {"id": "s3-star-in-deny", "summary": "actions = [\"s3:*\"] inside the Deny statement is NOT over-permissive (it's a deny)."}
+  ]
+}

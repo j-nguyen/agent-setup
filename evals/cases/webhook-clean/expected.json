@@ -1,0 +1,14 @@
+{
+  "verdict": "Approve or Approve with suggestions",
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "dangerously-set", "summary": "dangerouslySetInnerHTML in WebhookLog is NOT XSS: highlight() escapes both the payload and the term before adding <mark> tags (and is tested)."},
+    {"id": "timing-safe", "summary": "The signature comparison is constant-time (timingSafeEqual with an equal-length check); NOT a timing attack."},
+    {"id": "math-random", "summary": "Math.random() for 1% debug-log sampling is NOT insecure randomness."},
+    {"id": "replay", "summary": "Replays are handled: 5-minute timestamp tolerance plus the processed-event id recorded in the same transaction; NOT a replay or double-processing bug."},
+    {"id": "route-order", "summary": "Registering the raw-body webhook route before express.json() is correct and required; NOT a bug."},
+    {"id": "env-secrets", "summary": "Reading the webhook secrets from an environment variable is NOT a hardcoded/exposed secret."},
+    {"id": "any-high", "summary": "Any High-severity finding, or a 'Changes requested' verdict: the change is correct, tested and matches the spec."}
+  ]
+}

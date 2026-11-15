@@ -1,0 +1,19 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "middleware-runs-twice",
+      "file": "routergroup.go",
+      "summary": "On a missing file the static handler sets `c.handlers = group.engine.allNoRoute` and `c.index = -1` (after/routergroup.go:195-197). allNoRoute is built by rebuild404Handlers as combineHandlers(noRoute), i.e. it already includes the global middleware from engine.Use() (gin.go). That middleware has already run for this request (the static route's own chain includes it), so restarting the chain at index 0 runs Logger/Recovery/any Use() middleware a second time. Example: router.Use(counter); router.StaticFS(\"/\", http.Dir(\"/missing\")); GET /nonexistent increments the counter twice (and Logger logs the request twice). It should switch to engine.noRoute (the NoRoute handlers alone)."
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [],
+  "source": {
+    "repo": "https://github.com/gin-gonic/gin",
+    "license": "MIT",
+    "introduced_by": "b97ccf3a43d2901d295870b5876277bf478a4909",
+    "fixed_by": "4a23c4f7b9ced6b8e4476f2e021a61165153b71d",
+    "fix_url_or_issue": "https://github.com/gin-gonic/gin/issues/1804 (fix PR https://github.com/gin-gonic/gin/pull/1805; B was https://github.com/gin-gonic/gin/pull/1663)"
+  }
+}

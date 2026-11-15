@@ -42,6 +42,38 @@ does consider design and readability. It still needs evidence, though, not taste
   errors that leak internals.
 - **State and concurrency**: shared mutable state, missing transactions around
   multi-step writes, non-idempotent retries, unawaited promises or futures, blocking calls in async code.
+- **Transactions** (any database, any ORM):
+  - *Keep them short.* No network calls (HTTP APIs, payments, email, publishing
+    to a queue or broker), file I/O, sleeps or heavy CPU inside a transaction,
+    least of all while it holds row locks. Make the external call before the
+    transaction (with an idempotency key) or after it commits. Long-open
+    transactions also block other writers and stop vacuum from cleaning up (bloat).
+  - *Side effects wait for the commit.* Emails, jobs and events that must
+    reflect committed data go in an after-commit hook (`transaction.on_commit`,
+    `after_commit`, `afterCommit`) or a transactional outbox, never inline
+    before the commit, where they still fire if the transaction rolls back.
+    The outbox is needed when losing the side effect is not acceptable.
+  - *Nest only for partial failure.* Use a savepoint (Django nested `atomic()`,
+    SQLAlchemy `begin_nested()`, `SAVEPOINT`) when an inner step may fail
+    while the outer transaction carries on. Catching a database error inside a
+    transaction without one leaves it aborted (Postgres: "current transaction
+    is aborted"). When the steps must succeed or fail together, use one
+    transaction and no nesting. Watch for frameworks that silently join an
+    inner "transaction" to the outer one (Rails `transaction` without
+    `requires_new: true`, Spring `REQUIRED`), so an inner rollback doesn't do
+    what the code expects.
+  - *Locks.* Take row locks in a consistent order (e.g. by primary key) to avoid
+    deadlocks, take the most restrictive lock you'll need first, and lock only
+    rows you will change. Prefer an atomic
+    `UPDATE … SET x = x + …` to read-then-write. Use `SKIP LOCKED` for
+    work-queue tables.
+  - *Isolation and retries.* Under SERIALIZABLE or REPEATABLE READ, and for
+    deadlocks, the whole transaction must be retried on SQLSTATE 40001/40P01,
+    with a bounded number of attempts. Retry the complete transaction, including
+    the code that decides what to write, and make it safe to run again.
+  - *Always finished.* Every transaction is committed or rolled back on every
+    path (`with`, `defer tx.Rollback()`, `finally`). Every statement meant to
+    be in it uses the transaction handle, not the pool or another connection.
 - **Configuration and environment**: hardcoded environment-specific values
   (URLs, paths, timeouts) that belong in config (12-factor); feature flags with
   no cleanup plan.

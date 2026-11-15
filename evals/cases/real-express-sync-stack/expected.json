@@ -1,0 +1,19 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "route-skips-layer-on-defer",
+      "file": "lib/router/route.js",
+      "summary": "In Route#dispatch the new `if (++sync > 100) return setImmediate(next, err)` check (after/lib/router/route.js:132-135) runs after `var layer = stack[idx++]` (line 127). When the depth limit trips, idx has already advanced past the current layer, so the deferred next() resumes at the following layer and the current handler is silently skipped. With one route holding 6000 sync `route.all(...)` handlers that each increment a counter, only 5941 run (one is dropped every ~101 layers); a dropped layer could also be the final `route.get` handler, so the response is never sent. The check must come before the layer is taken (Router#handle in index.js is correct because it checks before advancing idx). The added test only asserts the last handler was called, so it doesn't catch this."
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [],
+  "source": {
+    "repo": "https://github.com/expressjs/express",
+    "license": "MIT",
+    "introduced_by": "708ac4cdf5cd0a658d62490a9f4d78d3e1ec6612",
+    "fixed_by": "7ec5dd2b3c5e7379f68086dae72859f5573c8b9b",
+    "fix_url_or_issue": "https://github.com/expressjs/express/issues/4913 (Fix regression routing a large stack in a single route, 4.18.2)"
+  }
+}

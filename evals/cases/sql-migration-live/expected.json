@@ -1,0 +1,57 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "archived-default-now",
+      "pass": "spec/performance",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "archived_at is added with DEFAULT now(), so every existing order gets archived_at = the migration time and every new order is stamped at insert: all orders look archived, against requirement 2 (NULL unless archived). Add the column with no default. (now() is stable, so Postgres 11+ doesn't rewrite the table for it; the problem is the data.)"
+    },
+    {
+      "id": "concurrently-in-transaction",
+      "pass": "bug/setup",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "CREATE INDEX CONCURRENTLY cannot run inside a transaction block, and runner.py wraps every file in conn.transaction(), so the migration fails at that statement (and rolls back everything before it). Needs its own non-transactional migration/runner support."
+    },
+    {
+      "id": "type-change-rewrite",
+      "pass": "performance",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "ALTER COLUMN quantity TYPE bigint rewrites all ~400M order_items rows (and their indexes) under ACCESS EXCLUSIVE, blocking writes for a long time (README limit). Use a new bigint column with a trigger/batched backfill and swap, or similar."
+    },
+    {
+      "id": "fk-validation-lock",
+      "pass": "performance",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "ADD CONSTRAINT ... FOREIGN KEY validates every existing row while holding locks that block writes on orders (and coupons) for the whole 80M-row scan. Add it NOT VALID, then VALIDATE CONSTRAINT separately (which only needs SHARE UPDATE EXCLUSIVE)."
+    },
+    {
+      "id": "big-backfill-update",
+      "pass": "performance",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "The EU backfill is one UPDATE over potentially tens of millions of rows, in the same transaction as the ALTER TABLEs. ADD COLUMN holds an ACCESS EXCLUSIVE lock on orders until the file commits, so all reads and writes to orders block for the whole UPDATE, which also creates massive bloat/WAL. Backfill in small batches in separate transactions after the schema change."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "lock-timeout-retry",
+      "pass": "architecture",
+      "file": "migrations/005_orders_region_and_archiving.sql",
+      "summary": "With lock_timeout = 5s, any statement that can't get its lock fails the whole file; there's no retry strategy."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "constant-default",
+      "summary": "ADD COLUMN region text NOT NULL DEFAULT 'us' is metadata-only in Postgres 11+ (constant default), NOT a table rewrite."
+    },
+    {
+      "id": "lock-timeout",
+      "summary": "SET lock_timeout = '5s' is good practice, not a problem."
+    },
+    {
+      "id": "concurrently-itself",
+      "summary": "Choosing CREATE INDEX CONCURRENTLY is right; the problem is only that it runs inside the runner's transaction."
+    }
+  ]
+}

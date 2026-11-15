@@ -1,0 +1,35 @@
+{
+  "verdict": "Approve or Approve with suggestions",
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {
+      "id": "three-transactions",
+      "summary": "Splitting checkout into reserve / charge / complete transactions with the charge outside any transaction is the intended design (pending orders are reconciled by an existing job); NOT a missing-atomicity bug."
+    },
+    {
+      "id": "savepoint-loyalty",
+      "summary": "session.begin_nested() around the loyalty update, with any SQLAlchemyError caught outside the with block, is the correct savepoint pattern; NOT a swallowed error or a broken transaction. A Suggestion about logging level, alerting or narrowing the exception type is fair and does NOT count as flagged; only presenting the savepoint handling as a defect (High/Medium finding) counts."
+    },
+    {
+      "id": "locked-increment",
+      "summary": "p.stock -= qty and account.points += ... are safe: the rows are locked FOR UPDATE in the same transaction; NOT lost updates."
+    },
+    {
+      "id": "skip-locked-claim",
+      "summary": "The relay's FOR UPDATE SKIP LOCKED claim with claimed_until, publishing outside the transaction, and marking sent afterwards (at-least-once) is the intended outbox design; NOT a double-publish or lock bug."
+    },
+    {
+      "id": "retry-wrapper",
+      "summary": "run_in_transaction retrying the whole unit on SQLSTATE 40001/40P01 with a bounded attempt count is correct."
+    },
+    {
+      "id": "lock-order",
+      "summary": "Products are locked in one query ordered by id; NOT a deadlock risk."
+    },
+    {
+      "id": "any-high",
+      "summary": "Any High-severity finding, or a 'Changes requested' verdict: the change is correct, tested and matches the spec."
+    }
+  ]
+}

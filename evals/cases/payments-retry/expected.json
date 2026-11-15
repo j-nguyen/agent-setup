@@ -1,0 +1,21 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "new-key-per-attempt", "pass": "spec/bug", "file": "payments/client.py",
+     "summary": "Requirement 4 broken: a new uuid4 Idempotency-Key is generated inside the retry loop for every attempt, so a timeout after the provider already processed the charge leads to a second, duplicate charge on retry. The key must be created once per create_charge call."},
+    {"id": "retry-after-units", "pass": "spec/bug", "file": "payments/client.py",
+     "summary": "Requirement 3 broken: Retry-After is in seconds but the code divides it by 1000 (treats it as milliseconds), so it waits 2 ms instead of 2 s and hammers the provider while rate-limited."},
+    {"id": "token-in-logs", "pass": "security", "file": "payments/client.py",
+     "summary": "The retry WARNING log includes the whole request body, which contains `source` (the card/payment token), writing payment credentials to logs."}
+  ],
+  "nice_to_find": [
+    {"id": "untested-idempotency", "pass": "testing", "file": "tests/test_retry.py",
+     "summary": "Tests never assert that retries reuse the same Idempotency-Key or that Retry-After is honored in seconds, so they don't catch the two spec bugs."}
+  ],
+  "must_not_flag": [
+    {"id": "random-jitter", "summary": "random.uniform for backoff jitter is fine; it is not a security use of randomness."},
+    {"id": "uuid4-key", "summary": "uuid4 as an idempotency key value is fine (the bug is only that it's regenerated per attempt)."},
+    {"id": "sleep-blocking", "summary": "Blocking time.sleep in this synchronous client is fine (injectable for tests)."},
+    {"id": "attempt-count", "summary": "The loop makes exactly 3 attempts and sleeps only between attempts; this is correct, not an off-by-one."}
+  ]
+}

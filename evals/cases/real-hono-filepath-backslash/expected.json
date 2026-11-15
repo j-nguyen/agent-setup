@@ -1,0 +1,19 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "only-first-backslash",
+      "file": "src/utils/filepath.ts",
+      "summary": "The separator conversion `filename.replace(/\\\\/, '/')` (after/src/utils/filepath.ts:26, same in after/deno_dist/utils/filepath.ts:26) has no `g` flag, so only the first backslash is converted. A multi-segment path keeps mixed separators: getFilePath({ filename: 'foo\\\\bar\\\\baz.txt' }) returns 'foo/bar\\\\baz.txt' (and 'public/foo/bar\\\\baz.txt' with root 'public') instead of 'foo/bar/baz.txt', which resolves to the wrong file or 404s. The new tests only use single-backslash paths after stripping the leading one, so they miss it."
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [],
+  "source": {
+    "repo": "https://github.com/honojs/hono",
+    "license": "MIT",
+    "introduced_by": "48dc87dfd542b9b8f1a442c2d0abab5d13ed4a3b",
+    "fixed_by": "82dad6297c90c33c41bf48b4530509a21588ad06",
+    "fix_url_or_issue": "https://github.com/honojs/hono/pull/4962 (B was https://github.com/honojs/hono/pull/1642)"
+  }
+}

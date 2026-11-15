@@ -9,6 +9,7 @@ from blog.slug import MAX_SLUG_LENGTH, slugify
         ("Hello, World!", "hello-world"),
         ("  Crème brûlée -- recipe  ", "creme-brulee-recipe"),
         ("C++ & Rust", "c-rust"),
+        ("Hello\u2014World \U0001F4A1 again", "hello-world-again"),
         ("", "post"),
         ("!!!", "post"),
     ],

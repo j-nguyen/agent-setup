@@ -1,0 +1,63 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "missing-rollback",
+      "pass": "bug",
+      "file": "internal/ledger/transfer.go",
+      "summary": "The early returns after BeginTx (the failed balance query and ErrInsufficientFunds) never call tx.Rollback(), so the transaction and its pooled connection stay open until ctx is canceled (database/sql only rolls back then; with a long-lived or background context, never). Under load, insufficient-funds attempts pile up open transactions and exhaust the 20-connection pool (requirement 4). Use `defer tx.Rollback()` right after BeginTx (a no-op after Commit)."
+    },
+    {
+      "id": "db-not-tx",
+      "pass": "bug",
+      "file": "internal/ledger/transfer.go",
+      "summary": "The credit UPDATE uses s.db.ExecContext instead of tx.ExecContext, so it runs on a different pooled connection outside the transaction and autocommits immediately. If the debit later rolls back (or commit fails), the money is credited anyway, creating money (requirement 1). It can also block or deadlock against the open transaction."
+    },
+    {
+      "id": "publish-before-commit",
+      "pass": "architecture",
+      "file": "internal/ledger/transfer.go",
+      "summary": "The Kafka event is published before tx.Commit(), so if the commit then fails (e.g. a serialization failure, which is expected under SERIALIZABLE) consumers see a transfer that never happened (requirement 3). The network call also runs while the transaction holds its locks and connection. Publish after commit via a transactional outbox (insert an outbox row in the same transaction)."
+    },
+    {
+      "id": "no-serialization-retry",
+      "pass": "spec",
+      "file": "internal/ledger/transfer.go",
+      "summary": "SERIALIZABLE transactions fail with SQLSTATE 40001 under concurrency (as can 40P01 deadlocks), but there's no retry loop, so these surface to the caller as errors (requirement 2). The whole transaction (including the balance read) needs a bounded retry."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "check-then-act",
+      "pass": "architecture",
+      "file": "internal/ledger/transfer.go",
+      "summary": "The balance check is a read-then-write in application code; a single `UPDATE ... SET balance = balance - $1 WHERE id = $2 AND balance >= $1` (or relying on the CHECK constraint) is simpler and doesn't depend on SERIALIZABLE."
+    },
+    {
+      "id": "ignored-marshal-error",
+      "pass": "bug",
+      "file": "internal/ledger/transfer.go",
+      "summary": "json.Marshal's error is ignored (harmless for this struct, but unidiomatic)."
+    },
+    {
+      "id": "rows-affected",
+      "pass": "bug",
+      "file": "internal/ledger/transfer.go",
+      "summary": "Neither UPDATE checks RowsAffected, so a nonexistent `to` account silently loses the money."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "atomic-update-expr",
+      "summary": "UPDATE ... SET balance = balance - $1 is an atomic update expression; NOT a lost-update race."
+    },
+    {
+      "id": "serializable-choice",
+      "summary": "Choosing SERIALIZABLE isolation is required by the spec; NOT an over-strict isolation problem."
+    },
+    {
+      "id": "error-wrapping",
+      "summary": "Wrapping errors with %w is correct."
+    }
+  ]
+}

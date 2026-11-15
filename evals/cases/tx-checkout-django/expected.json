@@ -1,0 +1,24 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "payment-in-transaction", "pass": "architecture/performance", "file": "shop/checkout.py",
+     "summary": "payments.charge (an HTTP call that takes 1–30 s) runs inside transaction.atomic() while select_for_update holds locks on the product rows, so every concurrent checkout for those products waits on the payment provider (requirement 5). And if anything after the charge fails, or the commit fails, the transaction rolls back but the card stays charged with no order and no refund (requirement 3). Charge outside the transaction (create a pending order first, or refund on failure) with a stable idempotency key."},
+    {"id": "email-before-commit", "pass": "architecture", "file": "shop/checkout.py",
+     "summary": "send_receipt is called inside the transaction, before the order items and stock updates and before the commit. If any of those fail, the customer gets a receipt for an order that was rolled back (requirement 4). Use transaction.on_commit(lambda: send_receipt(order)). It also adds SMTP latency while the product locks are held."},
+    {"id": "integrityerror-no-savepoint", "pass": "bug", "file": "shop/checkout.py",
+     "summary": "The IntegrityError from CouponRedemption.objects.create is caught inside the outer atomic() without a nested atomic() (savepoint). Django marks the transaction as needing rollback, and Postgres aborts it, so the next query (payments aside, Order.objects.create) raises TransactionManagementError / 'current transaction is aborted': a repeat-coupon checkout fails instead of charging full price (requirement 2). Wrap the create in `with transaction.atomic():`."},
+    {"id": "lock-order-deadlock", "pass": "bug/performance", "file": "shop/checkout.py",
+     "summary": "Product rows are locked one by one in cart order, so two concurrent checkouts with the same products in different orders (A then B vs B then A) deadlock; Postgres kills one with a deadlock error under flash-sale load (requirement 1). Lock all rows in one query ordered by primary key (filter(pk__in=...).order_by('pk').select_for_update())."}
+  ],
+  "nice_to_find": [
+    {"id": "random-idempotency-key", "pass": "bug", "file": "shop/checkout.py",
+     "summary": "A fresh uuid4 idempotency key on every call means a retried checkout (e.g. after a timeout) charges again; derive the key from the cart/checkout id."},
+    {"id": "n-queries", "pass": "performance", "file": "shop/checkout.py",
+     "summary": "One SELECT ... FOR UPDATE per cart item and one INSERT/UPDATE per line; batch them (bulk_create, a single locked query)."}
+  ],
+  "must_not_flag": [
+    {"id": "locked-read-modify-write", "summary": "product.stock -= qty followed by save() is safe here because the row is locked with select_for_update in the same transaction; NOT a lost-update race."},
+    {"id": "select-for-update-itself", "summary": "Using select_for_update inside atomic() to reserve stock is correct (the issues are lock order and duration, not the locking itself)."},
+    {"id": "update-fields", "summary": "save(update_fields=['stock']) is correct and efficient."}
+  ]
+}

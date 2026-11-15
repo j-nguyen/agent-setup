@@ -88,6 +88,8 @@ Return the report in the format from your instructions.
 **Always delegate when your tool can start subagents**, even for a small change.
 The `debugger` subagent runs with its own clean context and permissions, which is the
 point of this skill. Don't do the work inline because it looks quick.
+The subagent already has its checklists, so don't open `references/reproduce.md` or `references/report-format.md`
+unless you're doing the work yourself (last bullet below).
 
 How to start it depends on your environment:
 - **Claude Code**: the Agent/Task tool with `subagent_type: "debugger"`.
@@ -98,14 +100,19 @@ How to start it depends on your environment:
   and follow `references/reproduce.md` and `references/report-format.md` from
   this skill's directory, with the same safety rules.
 
+**If starting `debugger` fails**, retry once with the same brief. If it fails
+again, fall back to doing it yourself (the last bullet above) and keep the exact
+error message for the note in the relay step. Only say it failed if a start
+attempt actually returned an error.
+
 ## 5. Relay the result
 
 - Show the subagent's report **verbatim**, from its `# Debug report` heading to the
-  end. Don't rewrite or soften the verdict. If you have something to add, put
-  one short line *after* the report.
+  end. Don't rewrite or soften the verdict, and don't write an introduction
+  before it. If you have something to add, put one short line *after* the report.
 - **Check the stamp.** The report should end with *Debugged by the debugger
   subagent.* If it doesn't, say so in one line after the report: "Note: this was
-  done inline, not by the debugger subagent."
+  done inline, not by the debugger subagent (starting it failed: <the error>)."
 - Then offer the next steps that fit the verdict, but do none of them unasked:
   - **Reproduced**: "Want me to fix it? The repro test becomes the regression test."
   - **Any verdict**: "Want me to post the draft comment to <ID>?" Posting is

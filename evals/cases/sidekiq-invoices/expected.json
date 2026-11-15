@@ -1,0 +1,61 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "enqueue-in-transaction",
+      "pass": "spec/bug",
+      "file": "app/services/invoice_finalizer.rb",
+      "summary": "Both jobs are enqueued inside Invoice.transaction. Sidekiq pushes to Redis immediately (transactional_push! isn't enabled), so a job can run before the commit (seeing the draft invoice or the old total) and still runs if the transaction later rolls back. Breaks requirement 2: enqueue after the transaction commits (after the block, after_commit, or Sidekiq.transactional_push!)."
+    },
+    {
+      "id": "queue-not-processed",
+      "pass": "spec/setup",
+      "file": "app/jobs/deliver_invoice_job.rb",
+      "summary": "DeliverInvoiceJob uses queue \"mailers\", but config/sidekiq.yml only processes critical, default and low, so those jobs pile up in Redis and invoices are never emailed (requirement 5). Add the queue to sidekiq.yml or use an existing one."
+    },
+    {
+      "id": "email-not-idempotent",
+      "pass": "spec/bug",
+      "file": "app/jobs/deliver_invoice_job.rb",
+      "summary": "DeliverInvoiceJob doesn't check emailed_at before sending. If the job is retried, or update! fails after the email was sent (or the process dies in between), the customer gets the invoice again (requirement 3). Guard with `return if invoice.emailed_at` and claim it atomically before sending (e.g. under a lock)."
+    },
+    {
+      "id": "time-argument",
+      "pass": "bug",
+      "file": "app/services/invoice_finalizer.rb",
+      "summary": "SyncInvoiceToLedgerJob.perform_async(@invoice.id, @invoice.finalized_at) passes an ActiveSupport::TimeWithZone. Job args must be native JSON types, and in Sidekiq 8 strict args are on by default, so perform_async raises ArgumentError inside the transaction and finalizing fails (with strict args off it becomes a String, so booked_at.iso8601 in the job raises NoMethodError). Pass the id and read finalized_at in the job, or pass an ISO8601 string."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "ledger-idempotency-key",
+      "pass": "spec/bug",
+      "file": "app/jobs/sync_invoice_to_ledger_job.rb",
+      "summary": "LedgerClient supports idempotency_key, but the job doesn't pass one (e.g. \"invoice-#{id}\"), so a retry after a timeout whose request actually succeeded creates a second ledger entry (requirement 3)."
+    },
+    {
+      "id": "tests-miss-retries",
+      "pass": "testing",
+      "file": "spec/jobs/deliver_invoice_job_spec.rb",
+      "summary": "No test runs the job twice or covers the finalizer enqueueing after commit."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "find-by-nil",
+      "summary": "Returning early when the invoice no longer exists (find_by + return if nil) is correct handling for a deleted record, NOT a swallowed error."
+    },
+    {
+      "id": "retry-counts",
+      "summary": "retry: 10 / retry: 25 are reasonable retry settings; not a problem."
+    },
+    {
+      "id": "sidekiq-job-module",
+      "summary": "include Sidekiq::Job is the current API (not a deprecated Sidekiq::Worker issue)."
+    },
+    {
+      "id": "retries-exhausted",
+      "summary": "The sidekiq_retries_exhausted block is NOT a bug or a finding by itself. A Suggestion to also alert or record the permanent failure is fair and does NOT count as flagged; only presenting the block as a defect (High/Medium finding) counts."
+    }
+  ]
+}

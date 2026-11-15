@@ -1,0 +1,16 @@
+[
+  {
+    "dir": "01",
+    "message": "Add reminder durations",
+    "tag": "v1.4.0"
+  },
+  {
+    "dir": "02",
+    "message": "Support compound durations like 1h30m"
+  },
+  {
+    "dir": "03",
+    "message": "Document duration format",
+    "tag": "v1.4.1"
+  }
+]

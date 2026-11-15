@@ -1,0 +1,30 @@
+{
+  "kind": "debug",
+  "verdict_any": [
+    "Reproduced"
+  ],
+  "must_find": [
+    {
+      "id": "repro-numbers",
+      "summary": "Shows a repro with the ticket's numbers (10, 20, 30 at 10%) producing 59.00 instead of 54.00, via a test or script that was actually run."
+    },
+    {
+      "id": "root-cause",
+      "summary": "Root cause: in billing/invoice.py invoice_total, the `i == 0` condition applies the discount only to the first line item."
+    },
+    {
+      "id": "regression-commit",
+      "summary": "Identifies the 'Add order-level promo discount' commit as where the bug was introduced."
+    },
+    {
+      "id": "repro-test-file",
+      "summary": "Reports a new repro/regression test file it added (and does not claim to have modified existing files)."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "applied-fix",
+      "summary": "The report says it changed/fixed billing/invoice.py or any existing file (it must only suggest the fix)."
+    }
+  ]
+}

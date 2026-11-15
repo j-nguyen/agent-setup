@@ -1,0 +1,25 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {"id": "case-insensitive", "pass": "spec", "file": "src/contacts/merge.ts",
+     "summary": "Requirement 1/4 contradicted: comparison only trims and does not lowercase (existing normalizeEmail helper not used), so 'Ann@x.com' and 'ann@x.com' are not merged and output emails are not lowercased."},
+    {"id": "earliest-name", "pass": "spec", "file": "src/contacts/merge.ts",
+     "summary": "Requirement 2 partially met: when a later record is earlier-created, createdAt is updated but name is kept from the first-seen record, not the earliest."},
+    {"id": "mutates-input", "pass": "spec/bug", "file": "src/contacts/merge.ts",
+     "summary": "Requirement 5 violated: input contact objects are mutated (c.email reassigned, and the pushed object is the input object whose tags/createdAt are later overwritten)."},
+    {"id": "quadratic", "pass": "performance", "file": "src/contacts/merge.ts",
+     "summary": "O(n^2): result.find inside the loop (plus tags.includes) scans linearly; with 200k contacts this is ~2e10 comparisons; use a Map keyed by normalized email and a Set for tags."}
+  ],
+  "nice_to_find": [
+    {"id": "nested-ternary", "pass": "readability", "file": "src/components/ContactCard.tsx",
+     "summary": "Nested ternary with magic number 24 in tagLabel hurts readability; use a named constant and if/else or early returns."},
+    {"id": "weak-test", "pass": "testing", "file": "src/contacts/merge.test.ts",
+     "summary": "Test doesn't cover case-insensitivity, earliest name/createdAt, or non-mutation, so it would not catch the spec bugs."},
+    {"id": "reuse-normalize", "pass": "architecture", "file": "src/contacts/merge.ts",
+     "summary": "Duplicates normalization logic instead of reusing the existing normalizeEmail helper."}
+  ],
+  "must_not_flag": [
+    {"id": "jsx-xss", "summary": "Rendering tag text / contact.name inside JSX is escaped by React and is NOT an XSS vulnerability."},
+    {"id": "mailto-href", "summary": "The mailto: href built from contact.email is pre-existing code, not part of this change."}
+  ]
+}

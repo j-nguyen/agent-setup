@@ -1,0 +1,4 @@
+{
+  "$comment": "GitLab's official MCP server (OAuth). {gitlab_host} comes from your local config (default gitlab.com). Installed when you choose GitLab with `agent-setup trackers`.",
+  "url": "https://{gitlab_host}/api/v4/mcp"
+}

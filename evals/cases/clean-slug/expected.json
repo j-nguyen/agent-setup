@@ -1,0 +1,10 @@
+{
+  "verdict": "Approve or Approve with suggestions",
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "subprocess-injection", "summary": "subprocess.run with a fixed argument list (no shell) is NOT command injection."},
+    {"id": "md5", "summary": "md5 used for a non-security cache-busting id is NOT weak crypto."},
+    {"id": "any-high", "summary": "Any High-severity finding, or a 'Changes requested' verdict: the change is correct, tested and matches the spec."}
+  ]
+}

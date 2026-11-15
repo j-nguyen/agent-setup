@@ -1,0 +1,7 @@
+{
+  "$comment": "Ticket trackers offered by `agent-setup trackers` / install.sh. Your choice is stored per machine in ~/.config/agent-setup/config.json, not in this repo.",
+  "github":  {"label": "GitHub Issues", "how": "gh CLI, or the GitHub API (no MCP server needed)", "cli": "gh", "cli_optional": "without gh, public repos still work via the GitHub API; private repos need GITHUB_TOKEN", "auth_check": ["gh", "auth", "status"], "auth_fix": "gh auth login"},
+  "jira":    {"label": "Jira (Atlassian Cloud)", "how": "Atlassian's official MCP server, OAuth sign-in", "mcp": "atlassian"},
+  "gitlab":  {"label": "GitLab", "how": "GitLab's official MCP server, OAuth sign-in", "mcp": "gitlab", "settings": {"gitlab_host": "gitlab.com"}},
+  "linear":  {"label": "Linear", "how": "Linear's official MCP server (read-only), OAuth sign-in", "mcp": "linear"}
+}

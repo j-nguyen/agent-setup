@@ -1,0 +1,30 @@
+{
+  "kind": "debug",
+  "verdict_any": [
+    "Not a bug"
+  ],
+  "must_find": [
+    {
+      "id": "confirms-behavior",
+      "summary": "Confirms by running it that 'iphone' returns nothing with the default settings (the behavior itself is real)."
+    },
+    {
+      "id": "cites-intent",
+      "summary": "Cites evidence that this is intended: the README 'Search' section, the docstring in catalog/search.py, and/or the test named test_default_is_case_sensitive_by_design."
+    },
+    {
+      "id": "points-to-option",
+      "summary": "Points the reporter to case_sensitive=False / the 'Ignore case' option."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "suggests-default-change",
+      "summary": "The report recommends making search case-insensitive by default as the fix, without noting this would break case-significant product codes."
+    },
+    {
+      "id": "applied-fix",
+      "summary": "The report says it modified catalog/search.py or any existing file."
+    }
+  ]
+}

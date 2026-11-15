@@ -1,0 +1,4 @@
+{
+  "$comment": "Atlassian's official remote MCP server for Jira/Confluence (OAuth 2.1, Atlassian Cloud). Installed when you choose Jira with `agent-setup trackers`.",
+  "url": "https://mcp.atlassian.com/v2/mcp"
+}

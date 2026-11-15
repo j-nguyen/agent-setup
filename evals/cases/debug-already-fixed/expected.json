@@ -1,0 +1,30 @@
+{
+  "kind": "debug",
+  "verdict_any": [
+    "Already fixed"
+  ],
+  "must_find": [
+    {
+      "id": "fails-on-v140",
+      "summary": "Shows that parse_duration('1h30m') raises ValueError on v1.4.0 (checked out/run in a worktree, git archive, or git show of the old version)."
+    },
+    {
+      "id": "passes-on-head",
+      "summary": "Shows that it works (returns 5400) on the current HEAD."
+    },
+    {
+      "id": "fix-commit",
+      "summary": "Names the fixing commit: 'Support compound durations like 1h30m' (by subject or sha), and/or that the fix ships in v1.4.1."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "says-reproduced-on-head",
+      "summary": "The report says the crash still reproduces on the current code."
+    },
+    {
+      "id": "changed-branch",
+      "summary": "The report says it checked out a different branch/tag in the main working tree (instead of a separate worktree/copy) and left it there."
+    }
+  ]
+}

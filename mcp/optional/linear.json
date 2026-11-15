@@ -1,0 +1,4 @@
+{
+  "$comment": "Linear's official MCP server (read-only endpoint, OAuth). Installed when you choose Linear with `agent-setup trackers`.",
+  "url": "https://mcp.linear.app/mcp/readonly"
+}

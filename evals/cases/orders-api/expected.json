@@ -1,0 +1,69 @@
+{
+  "verdict": "Changes requested",
+  "must_find": [
+    {
+      "id": "sqli-sort",
+      "pass": "security",
+      "file": "app/routes/orders.py",
+      "summary": "SQL injection: the `sort` query parameter is interpolated into ORDER BY via f-string without an allowlist."
+    },
+    {
+      "id": "idor",
+      "pass": "security/spec",
+      "file": "app/routes/orders.py",
+      "summary": "Missing authorization: any logged-in user can list any other user's orders (no can_access_user check / 403), violating requirement 1 (IDOR)."
+    },
+    {
+      "id": "no-404",
+      "pass": "spec",
+      "file": "app/routes/orders.py",
+      "summary": "Requirement 2 not met: no 404 when the user does not exist (returns an empty list instead)."
+    },
+    {
+      "id": "n-plus-one",
+      "pass": "performance",
+      "file": "app/routes/orders.py",
+      "summary": "N+1 queries: one order_items query per order inside the loop; should batch with ANY/IN or a join."
+    },
+    {
+      "id": "migration-lock",
+      "pass": "performance",
+      "file": "migrations/002_orders_index.sql",
+      "summary": "CREATE INDEX without CONCURRENTLY on a ~40M-row live table blocks writes for the duration of the build."
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "index-shape",
+      "pass": "performance",
+      "file": "migrations/002_orders_index.sql",
+      "summary": "Index (user_id) does not support ORDER BY created_at / total; should be composite e.g. (user_id, created_at DESC); order_items.order_id also has no index."
+    },
+    {
+      "id": "cursor-mismatch",
+      "pass": "spec",
+      "file": "app/routes/orders.py",
+      "summary": "Cursor uses `id < after` while sorting by created_at or total, so pages skip or repeat rows; keyset cursor must match the sort key."
+    },
+    {
+      "id": "limit-parse",
+      "pass": "architecture",
+      "file": "app/routes/orders.py",
+      "summary": "int(limit) on non-numeric input raises and returns 500 instead of 400; negative limit not rejected."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "param-user-id",
+      "summary": "The user_id / after / limit values are passed as %s parameters; these are NOT SQL injection."
+    },
+    {
+      "id": "env-secret",
+      "summary": "Reading SECRET_KEY from an environment variable must NOT be called a security issue (hardcoded secret, secret exposure, insecure config). Noting it as out-of-scope or a startup KeyError is fine and does NOT count as flagged."
+    },
+    {
+      "id": "rate-limit",
+      "summary": "Lack of rate limiting / DoS concerns (explicitly excluded)."
+    }
+  ]
+}

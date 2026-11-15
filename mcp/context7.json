@@ -1,0 +1,5 @@
+{
+  "$comment": "Context7: current library/framework docs (Upstash's hosted server). Works without a key at a lower rate limit. For higher limits, get a key at context7.com, export CONTEXT7_API_KEY, and add \"bearer_token_env\": \"CONTEXT7_API_KEY\" here.",
+  "url": "https://mcp.context7.com/mcp",
+  "opencode": {"oauth": false}
+}

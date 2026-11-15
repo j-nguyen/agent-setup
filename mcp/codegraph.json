@@ -1,0 +1,7 @@
+{
+  "$comment": "CodeGraph code-intelligence server (local, stdio). Needs the `codegraph` CLI on PATH; it only answers in projects indexed with `codegraph init`. Matches the hand-made entries it replaces: always loaded in Claude Code, tools listed directly (not via Code Mode) in OpenCode.",
+  "command": "codegraph",
+  "args": ["serve", "--mcp"],
+  "claude": {"alwaysLoad": true},
+  "opencode": {"codemode": false}
+}

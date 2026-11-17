@@ -1,0 +1,1 @@
+We need to add rate limiting to the public API — we've been getting hammered by a couple of partners' integrations and it's slowing things down for everyone. Can you plan it out before we build it? Pro partners should get a higher limit than free ones.

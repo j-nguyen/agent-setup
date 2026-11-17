@@ -1,0 +1,36 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/order-events-outbox.md",
+  "steps_note": null,
+  "verdict_any": ["Does not conform"],
+  "checklist": {
+    "C1": ["Conforms"],
+    "C2": ["Conforms", "Partial"],
+    "C3": ["Deviated", "Partial"],
+    "C4": ["Conforms"],
+    "C5": ["Conforms"],
+    "C6": ["Conforms", "Partial"]
+  },
+  "must_find": [
+    {"id": "publish-inside-transaction", "item": "C3", "file": "shop/orders.py",
+     "summary": "create_order imports shop.broker, takes a broker argument and calls broker.publish inside the `with conn:` order transaction (Option B, which the plan rejected in D1/D3). The event can be published for an order that then rolls back (violates R2), and broker latency/outage now sits in the order transaction (R3). Order creation must only write the outbox row; publishing belongs to the relay.",
+     "recommend_any": ["Fix code"]},
+    {"id": "replay-scope-creep", "item": null, "file": "shop/event_relay.py",
+     "summary": "Unplanned replay feature: `replay_events` in shop/event_relay.py plus a new `shop/admin.py` CLI that re-publishes all events since an id, including already-sent ones. The plan lists replaying historical events as an explicit non-goal, so this is scope creep / an undocumented decision.",
+     "recommend_any": ["Fix code", "Discuss"]}
+  ],
+  "nice_to_find": [
+    {"id": "test-encodes-deviation", "file": "tests/test_orders.py",
+     "summary": "test_publishes_immediately_when_broker_given asserts the direct-publish behavior, so the tests lock in the deviation."},
+    {"id": "replay-marks-sent-blindly", "file": "shop/event_relay.py",
+     "summary": "replay_events publishes without catching PublishError per row and then marks every row since_id as sent, unlike the relay's publish-then-mark rule (D2)."},
+    {"id": "admin-new-transport", "file": "shop/admin.py",
+     "summary": "admin.py adds its own raw TCP broker transport, an undocumented second way to reach the broker."}
+  ],
+  "must_not_flag": [
+    {"id": "relay-module-name", "summary": "The relay lives in shop/event_relay.py instead of shop/outbox_relay.py; the plan explicitly says '(or similar name)', so this is not a deviation."},
+    {"id": "test-helpers", "summary": "tests/helpers.py (RecordingTransport/make_broker) is a supporting test double, not scope creep."},
+    {"id": "unsent-partial-index", "summary": "The partial index outbox_events_unsent on (id) WHERE sent_at IS NULL is a supporting change for the relay query, not a data-model deviation."},
+    {"id": "orders-constant", "summary": "The ORDER_CREATED topic constant and json.dumps(sort_keys=True) payload encoding are fine and match the planned payload."}
+  ]
+}

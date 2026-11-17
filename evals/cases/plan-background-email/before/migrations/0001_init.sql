@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    marketing_opt_in INTEGER NOT NULL DEFAULT 0,
+    locale TEXT NOT NULL DEFAULT 'en'
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    amount_cents INTEGER NOT NULL,
+    pdf_path TEXT
+);

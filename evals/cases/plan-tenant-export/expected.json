@@ -1,0 +1,24 @@
+{
+  "kind": "plan",
+  "must_find": [
+    {"id": "tenant-from-context", "summary": "Tenant isolation: the export reads invoices only through the tenant-scoped repository (invoices.Repo / ListPage in internal/invoices/repo.go), which takes the tenant from auth.FromContext (internal/auth/context.go); the tenant ID is never accepted from the request (query string, body or path), and the job inherits the requester's Principal."},
+    {"id": "billing-roles", "summary": "Authorization: the export endpoints are wrapped in auth.RequireRole with the existing auth.BillingRoles (owner/admin/billing), so plain members cannot export; the status/download endpoint is checked the same way and scoped to the tenant."},
+    {"id": "async-job-signed-url", "summary": "Runs the export as a background job on the existing runner in internal/jobs (Runner.Register / Enqueue, ideally with a dedupe key), following the internal/statements pattern: the request returns 202 with a job id, and the finished CSV is uploaded via storage.Client.PutTenantFile with retention and served via a short-lived storage.Client.SignedURL from a status endpoint."},
+    {"id": "batched-streaming", "summary": "Reads invoices in batches with keyset pagination (Repo.ListPage + CursorOf, MaxPageSize) and streams CSV rows into the upload (encoding/csv writer over an io.Pipe into PutTenantFile), rather than loading every invoice into memory (unlike statements.Generate, which collects a month into a slice)."},
+    {"id": "csv-injection", "summary": "Escapes spreadsheet formula injection in text cells (customer_name, customer_ref, memo, number): values starting with =, +, -, @, tab or CR are prefixed (e.g. with a single quote) before writing the CSV."},
+    {"id": "audit-and-notify", "summary": "Records the export in the audit log via audit.Log.Record (internal/audit, e.g. invoices.export_requested / invoices.exported) and notifies the requester on completion via notify.Notifier.Ready (internal/notify) with a dashboard link rather than a raw file URL, as statements does."}
+  ],
+  "nice_to_find": [
+    {"id": "filters-and-format", "summary": "Defines the CSV columns and format (header row, money as decimal from total_cents with currency, RFC 3339 or ISO dates, UTF-8) and optional filters (status, issued date range) passed as job payload, still tenant-scoped."},
+    {"id": "consistency", "summary": "Addresses consistency during a long export (invoices added or changed while paging: keyset order on (issued_at, id) gives a stable cursor, or a snapshot/upper bound on issued_at taken when the job starts)."},
+    {"id": "tests", "summary": "Test plan includes a cross-tenant test (tenant A's export never contains tenant B's invoices), a role test (member gets 403), and a CSV-escaping test."}
+  ],
+  "must_not_flag": [
+    {"id": "sync-unbounded", "summary": "Generates the full export synchronously in the HTTP request handler (streaming all invoices in the response with no background job), or loads all of a tenant's invoices into memory at once."},
+    {"id": "tenant-from-request", "summary": "Takes the tenant ID (or account ID) from the query string, request body or URL path for the export."},
+    {"id": "new-infra", "summary": "Introduces new infrastructure: a new queue or broker (SQS, Redis, Kafka, RabbitMQ), a new bucket service or a separate export microservice, instead of internal/jobs and internal/storage."},
+    {"id": "long-lived-link", "summary": "Emails or stores a long-lived or permanent public download link (beyond storage.MaxURLTTL), or makes the object public."}
+  ],
+  "allowed_writes": "^docs/.*\\.md$",
+  "forbidden_command_substrings": []
+}

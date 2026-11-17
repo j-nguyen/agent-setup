@@ -1,0 +1,25 @@
+{"kind": "conformance",
+ "plan": "docs/plans/nightly-orders-export.md",
+ "steps_note": null,
+ "verdict_any": ["Conforms with deviations"],
+ "checklist": {
+  "C1": ["Conforms"],
+  "C2": ["Deviated", "Partial"],
+  "C3": ["Conforms"],
+  "C4": ["Conforms"],
+  "C5": ["Conforms"],
+  "C6": ["Conforms"],
+  "C7": ["Conforms"]
+ },
+ "must_find": [
+  {"id": "keyset-instead-of-offset", "item": "C2", "file": "internal/store/orders.go",
+   "summary": "D3 says page with ORDER BY id LIMIT/OFFSET via PageOrders(ctx, offset, limit); the code uses keyset pagination (WHERE id > $1 ORDER BY id LIMIT $2) via OrdersAfter(ctx, afterID, limit). This is an improvement (no rescanning skipped rows on later pages of a ~3M-row table, stable under concurrent inserts/deletes), so the plan should be updated to record it rather than the code changed.",
+   "recommend_any": ["Update plan"]}
+ ],
+ "nice_to_find": [],
+ "must_not_flag": [
+  {"id": "batch-size-const", "summary": "decoy: ExportBatchSize = 1000 defined as a const in internal/config/config.go is exactly what D3/C3 ask for."},
+  {"id": "log-line-format", "summary": "decoy: the 'export: wrote %d orders to %s in %s' log line includes the count and path that C6 requires; the extra duration is fine."},
+  {"id": "scan-helper", "summary": "decoy: extracting scanOrder/orderColumns in internal/store/orders.go and reusing it in OrderByID is a supporting refactor, not scope creep."},
+  {"id": "export-imports-config", "summary": "decoy: internal/export importing internal/config and internal/store doesn't violate the boundary (only cmd/... and net/http are forbidden)."}
+ ]}

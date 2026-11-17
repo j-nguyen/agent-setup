@@ -1,0 +1,65 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/webhook-delivery.md",
+  "steps_note": null,
+  "verdict_any": [
+    "Conforms with deviations",
+    "Does not conform"
+  ],
+  "checklist": {
+    "C1": [
+      "Conforms"
+    ],
+    "C2": [
+      "Conforms"
+    ],
+    "C3": [
+      "Conforms"
+    ],
+    "C4": [
+      "Deviated",
+      "Partial"
+    ],
+    "C5": [
+      "Conforms"
+    ],
+    "C6": [
+      "Conforms"
+    ],
+    "C7": [
+      "Conforms"
+    ]
+  },
+  "must_find": [
+    {
+      "id": "timeout-config-key-renamed",
+      "item": "C4",
+      "file": "src/config.ts",
+      "summary": "The plan's interface says the timeout is env `WEBHOOK_TIMEOUT_MS` exposed as `config.webhookTimeoutMs`; the code reads `WEBHOOK_REQUEST_TIMEOUT_MS` into `config.webhookRequestTimeoutMs` (src/config.ts, used in src/webhooks/deliver.ts). Behavior (5000 ms default, AbortSignal.timeout per attempt) matches; only the key/field names differ, and the change isn't in the Deviation log. Minor.",
+      "recommend_any": [
+        "Fix code",
+        "Update plan",
+        "Discuss"
+      ]
+    }
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {
+      "id": "four-attempts",
+      "summary": "Delivery uses DEFAULT_ATTEMPTS (4) instead of 3 attempts. The plan's Deviation log records this change to C3 as accepted, so it conforms."
+    },
+    {
+      "id": "injected-fetch",
+      "summary": "The optional `fetchImpl` and `sleep` dependencies (defaulting to global fetch / the retry helper's sleep) are supporting changes for testability, not drift."
+    },
+    {
+      "id": "extra-duration-field",
+      "summary": "The failure log includes an extra `durationMs` field alongside the planned endpointId, eventId, attempts and status; it doesn't log the secret or body, so C5/C6 still conform."
+    },
+    {
+      "id": "exported-retry-predicate",
+      "summary": "The exported `isRetryable` function and `HttpStatusError` class are supporting helpers implementing D2's retry rules, not undocumented decisions."
+    }
+  ]
+}

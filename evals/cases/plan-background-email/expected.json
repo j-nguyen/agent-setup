@@ -1,0 +1,21 @@
+{"kind": "plan",
+ "must_find": [
+  {"id": "reuse-jobs-queue", "summary": "Sends the welcome email from a new handler registered with @handler(...) in the existing DB-backed queue (jobs/queue.py enqueue + jobs/worker.py + jobs/handlers.py), following the billing/invoices.py render_pdf pattern; no new queueing system."},
+  {"id": "enqueue-transactionally", "summary": "Enqueues the job so it exists only if signup commits: either jobs.queue.enqueue inside the same db.atomic() block (the job row commits with the user, as billing/invoices.py does) or via db.on_commit; and removes send_email from inside the atomic() block in accounts/signup.py."},
+  {"id": "idempotent-handler", "summary": "Makes the welcome job safe to run more than once: a dedupe_key such as welcome_email:<user_id> on enqueue and/or a handler-side guard (e.g. a welcome_email_sent_at column or sent-marker checked before sending) so worker retries or a crash after SMTP send don't send duplicate emails."},
+  {"id": "retry-via-worker", "summary": "Relies on the existing worker retry and exponential backoff (attempts/max_attempts, BACKOFF_BASE_SECONDS, dead status) for SMTP failures instead of building new retry logic, and says what happens when the job goes dead (e.g. log/alert, user can still log in)."},
+  {"id": "signup-no-longer-fails", "summary": "States signup succeeds even when SMTP fails or is slow (the email failure no longer rolls back the user), and updates/replaces tests/test_signup.py's test_smtp_failure_rolls_back_signup accordingly."},
+  {"id": "tests-rollback-and-retry", "summary": "Test plan covers: no job/no email when the signup transaction rolls back (e.g. duplicate email), the job is enqueued on successful signup, the handler sends with the right locale template, and retry after an SMTP failure (tests/base.py FakeTransport.fail_next + worker.run_once) without a duplicate send."}
+ ],
+ "nice_to_find": [
+  {"id": "payload-user-id-only", "summary": "Job payload carries only the user_id (and maybe locale); the handler loads the user and locale from the DB at run time rather than putting the email body or PII in the jobs payload."},
+  {"id": "handle-deleted-user", "summary": "Handler copes with the user no longer existing (deleted before the job ran) by returning without error."},
+  {"id": "worker-registers-handler", "summary": "Notes that jobs/worker.py main() must import the new handler module so it is registered (it currently imports only billing.invoices)."}
+ ],
+ "must_not_flag": [
+  {"id": "new-broker", "summary": "Introduces Celery, RQ, RabbitMQ, Redis, SQS, Kafka or another new queue/broker, or a thread pool / asyncio fire-and-forget in the web process, instead of the existing jobs table and worker."},
+  {"id": "send-in-transaction", "summary": "Sends the email (or calls the SMTP transport) inside the db.atomic() block, or enqueues/sends before the transaction commits in a way that sends mail for a rolled-back signup."},
+  {"id": "custom-retry-loop", "summary": "Adds a hand-written retry/sleep loop around send_email in the request path or handler instead of using the worker's retries."}
+ ],
+ "allowed_writes": "^docs/.*\\.md$",
+ "forbidden_command_substrings": []}

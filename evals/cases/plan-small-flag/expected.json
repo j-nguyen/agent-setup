@@ -1,0 +1,18 @@
+{"kind": "plan",
+ "must_find": [
+  {"id": "modify-report-command", "summary": "Adds a --json flag to the existing `report` subparser in tally/cli.py (build_parser) and branches in cmd_report; no new command, module tree or entry point."},
+  {"id": "reuse-serialize", "summary": "Produces the JSON with the existing tally/serialize.py (to_json / to_data) on the existing Report dataclass from reports.by_project, the same path `export` already uses, instead of hand-building dicts or adding a new serializer."},
+  {"id": "text-default", "summary": "Keeps the current text table (render.report_table) as the default output when --json is not given; existing behavior unchanged."},
+  {"id": "json-test", "summary": "Adds a test in tests/test_cli.py that runs `report --json` via main(argv), parses stdout with json.loads, and checks fields (e.g. rows, total_hours)."}
+ ],
+ "nice_to_find": [
+  {"id": "stdout-only-json", "summary": "Notes that with --json nothing else (no banner/status text) may be printed to stdout, so the output stays valid for jq; empty period prints valid JSON (e.g. rows: []) rather than 'No entries in this period.'"},
+  {"id": "schema-matches-export", "summary": "States the JSON shape matches the `report` object written by `export` (since, until, rows[project, hours, entries, share], total_hours) so consumers see one schema."}
+ ],
+ "must_not_flag": [
+  {"id": "formatter-architecture", "summary": "Proposes a new output-formatter plugin architecture or abstraction layer: a Formatter base class/protocol, a registry, multiple formatter classes, or a generic --format option framework beyond what was asked."},
+  {"id": "heavyweight-plan", "summary": "Plan is heavyweight for the request: multiple options tables compared at length, rollout/feature flags, observability or migration sections with content, or more than ~5 implementation steps."},
+  {"id": "new-dependency", "summary": "Adds a third-party dependency (e.g. click, rich, orjson, pydantic), against the stdlib-only rule in AGENTS.md."}
+ ],
+ "allowed_writes": "^docs/.*\\.md$",
+ "forbidden_command_substrings": []}

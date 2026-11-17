@@ -1,0 +1,24 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/percent-coupons.md",
+  "steps_note": null,
+  "verdict_any": ["Conforms"],
+  "checklist": {
+    "C1": ["Conforms"],
+    "C2": ["Conforms"],
+    "C3": ["Conforms"],
+    "C4": ["Conforms"],
+    "C5": ["Conforms"],
+    "C6": ["Conforms"],
+    "C7": ["Conforms"]
+  },
+  "must_find": [],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "subtotal-helper-refactor", "summary": "Extracting the item-sum loop from cartTotal into subtotalCents in src/cart/money.ts (used by both total.ts and coupons.ts) is a supporting refactor needed to compute the items-only subtotal, not an unplanned change or a component deviation."},
+    {"id": "renamed-local", "summary": "cartTotal now uses a local named `gross` instead of `sum`; a renamed local variable is not drift."},
+    {"id": "extra-money-test", "summary": "test/money.test.ts is an extra unit test beyond the test plan; additional tests are supporting, not scope creep."},
+    {"id": "coupon-rejection-type", "summary": "Exporting the CouponRejection type alias and setting error.name are supporting details of the planned CouponError interface, not interface drift."},
+    {"id": "date-in-catalog", "summary": "`new Date(...)` literals in couponCatalog.ts are static data, not a use of Date.now() or I/O; the boundary rule C6 holds."}
+  ]
+}

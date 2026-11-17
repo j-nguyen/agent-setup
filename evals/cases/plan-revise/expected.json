@@ -1,0 +1,24 @@
+{
+  "kind": "plan",
+  "must_find": [
+    {"id": "stable-ids", "summary": "Revises docs/plans/notifications.md in place, keeping D1-D4 and C1-C8 with their original numbers and meaning (C7 muting stays as an item, even if unimplemented), and adds the digest work as new ids after them (D5+, C9+, new steps after step 5)."},
+    {"id": "marks-changes", "summary": "Explicitly marks what changed in the revision: e.g. the Scope/Non-goals line that said email delivery is out of scope is updated and flagged as changed, and any modified existing decision or checklist item is marked as revised (e.g. 'changed', 'revised', a changelog note or a Deviation log/revision entry), rather than silently rewritten."},
+    {"id": "settings-preference", "summary": "Stores the digest preference (off / daily / weekly, and possibly time or weekday) in the existing per-user settings model `UserSettings` in src/users/settings.ts (e.g. under `notifications`), with validation in updateSettings, rather than a new preferences table or store."},
+    {"id": "existing-scheduler", "summary": "Schedules digest sending through the existing scheduler: registers a job via registerJob in src/scheduler/jobs.ts (src/scheduler/index.ts), with no new cron library, setInterval or external scheduler."},
+    {"id": "timezone", "summary": "Handles time zones for daily (and weekly) digests using the user's `timezone` field in UserSettings, recognizing that the scheduler's dailyAt/weeklyAt schedules are UTC-only (e.g. an hourly/every-minute job that selects users whose local time is the send time, or a per-user next-send computation)."},
+    {"id": "unsubscribe", "summary": "Digest emails carry an unsubscribe/opt-out: reuses sendEmail's `list` option and the signed one-click unsubscribe link in src/email/mailer.ts (adding a new EmailList value such as 'notification-digest'), and unsubscribing turns the digest preference off."},
+    {"id": "new-checklist-items", "summary": "Adds new conformance checklist items for the digest (e.g. preference stored and validated in settings, job registered in the scheduler, local-time selection, idempotent/at-most-once per period, unsubscribe header, only unread/new notifications since the last digest), tagged with decisions and steps."}
+  ],
+  "nice_to_find": [
+    {"id": "no-double-send", "summary": "Prevents duplicate or missed digests across restarts or overlapping runs by recording the last digest sent per user (e.g. a lastDigestAt timestamp) and only including notifications created since then; skips sending when there is nothing new."},
+    {"id": "respects-muting", "summary": "Says digests respect muted kinds (C7) and/or only include unread notifications, and notes that C7 is still unimplemented, so the digest depends on it or handles muting itself."},
+    {"id": "email-renderer", "summary": "Reuses renderText in src/notifications/render.ts for digest line items, rather than a second per-kind renderer."}
+  ],
+  "must_not_flag": [
+    {"id": "renumbers", "summary": "Renumbers, merges or drops existing decisions D1-D4 or checklist items C1-C8 (for example removing C7 because muting isn't implemented, or inserting new items in the middle so old ids shift)."},
+    {"id": "separate-plan", "summary": "Writes a brand-new plan file and leaves notifications.md unchanged."},
+    {"id": "new-infra", "summary": "Introduces new infrastructure or libraries for scheduling or email (node-cron, BullMQ, Redis, a separate worker service, a third-party email/digest service) instead of the existing scheduler and mailer."}
+  ],
+  "allowed_writes": "^docs/.*\\.md$",
+  "forbidden_command_substrings": []
+}

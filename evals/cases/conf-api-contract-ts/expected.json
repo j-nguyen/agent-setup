@@ -1,0 +1,94 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/workspace-invites.md",
+  "steps_note": null,
+  "verdict_any": [
+    "Does not conform"
+  ],
+  "checklist": {
+    "C1": [
+      "Conforms"
+    ],
+    "C2": [
+      "Deviated",
+      "Partial"
+    ],
+    "C3": [
+      "Deviated",
+      "Partial",
+      "Missing"
+    ],
+    "C4": [
+      "Deviated",
+      "Partial",
+      "Conforms"
+    ],
+    "C5": [
+      "Conforms",
+      "Partial"
+    ],
+    "C6": [
+      "Conforms"
+    ],
+    "C7": [
+      "Partial",
+      "Deviated",
+      "Conforms"
+    ]
+  },
+  "must_find": [
+    {
+      "id": "create-returns-200",
+      "item": "C2",
+      "file": "src/invites/routes.ts",
+      "summary": "POST /v1/invites returns status 200 instead of the planned 201 (D1 and the /v1 convention).",
+      "recommend_any": [
+        "Fix code"
+      ]
+    },
+    {
+      "id": "expires-at-snake-case",
+      "item": "C2",
+      "file": "src/invites/routes.ts",
+      "summary": "The response uses the field `expires_at` instead of the planned camelCase `expiresAt` (toJson in src/invites/routes.ts), in both create and list responses.",
+      "recommend_any": [
+        "Fix code"
+      ]
+    },
+    {
+      "id": "offset-pagination",
+      "item": "C3",
+      "file": "src/invites/routes.ts",
+      "summary": "GET /v1/invites uses offset pagination (`?page=` with `{items, page, total}`) instead of the planned cursor pagination (`?cursor=&limit=` \u2192 `{items, nextCursor}`, as in /v1/teams); the store exposes list(offset, limit) instead of listAfter(cursorId, limit).",
+      "recommend_any": [
+        "Fix code"
+      ]
+    }
+  ],
+  "nice_to_find": [
+    {
+      "id": "tests-encode-deviations",
+      "file": "test/invites.test.ts",
+      "summary": "The tests assert the deviating contract (status 200, expires_at, page-based listing) instead of the planned one, so they wouldn't catch the contract drift."
+    },
+    {
+      "id": "store-method-name",
+      "file": "src/invites/store.ts",
+      "summary": "InviteStore exposes `list(offset, limit)` rather than the planned `listAfter(cursorId, limit)`."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "id": "internal-created-by",
+      "summary": "The store keeps internal `createdBy`/`createdAt` fields that are not exposed in responses; D1 explicitly allows internal fields as long as they aren't returned."
+    },
+    {
+      "id": "reuses-is-email",
+      "summary": "Reusing the existing `isEmail`/`parseLimit` helpers from src/http/validate.ts is what the plan asked for, not drift."
+    },
+    {
+      "id": "existing-request-logger",
+      "summary": "Requests pass through the pre-existing requestLogger middleware; it is not a new, unplanned change."
+    }
+  ]
+}

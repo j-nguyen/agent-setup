@@ -44,7 +44,8 @@ The spec pass is only as good as the spec. Collect, in this order:
   Quote it verbatim; don't paraphrase it.
 - The PR title, description and linked issues, if there's a PR.
 - Spec or design docs the user pointed to, or that the branch obviously
-  implements (names like `docs/specs/<feature>.md`).
+  implements (names like `docs/specs/<feature>.md` or `docs/plans/<feature>.md`,
+  the latter written by the plan-architecture skill).
 
 If none of these exist **and** the change is more than a small fix, ask the user
 one short question: "What should this change do? Paste the spec or ticket, or say
@@ -81,6 +82,15 @@ Paths: <whole change | the files or directories to limit the review to>
 Focus / skip: <anything else the user asked for, or "none">
 Return the report in the format from your instructions.
 ```
+
+**Run it in the background when you can.** A run takes a few minutes. If your
+tool can run a subagent in the background and notify you when it finishes
+(for example Claude Code's `run_in_background`), start it that way. Tell the user
+in one line that it's running and that they can keep working, then end your turn.
+Don't poll it, and don't do its work yourself while you wait. Pick up the next
+step when the notification arrives. If your tool has no background mode, or
+this is a non-interactive run (one scripted prompt, such as `claude -p` or
+`codex exec`, where nobody sees an interim message), run it in the foreground.
 
 **Always delegate when your tool can start subagents**, even for a small change.
 The `code-reviewer` subagent runs with its own clean context and permissions, which is the
@@ -129,19 +139,34 @@ for a quick review, say so in one line after the report.
 
 ## 6. Relay the result
 
-- Show the user the subagent's report **verbatim**, from its `# Code review` heading
-  to the end. Keep the `**Verdict:**` line and the section headings exactly as
-  written. Don't rewrite, summarize, soften or re-rank it, and don't add findings
-  of your own. Don't write an introduction before it. If you have something to
-  add, such as a pass that couldn't run, put one short line *after* the report.
+- **Relay a compact version, not the whole report.** Re-typing the full report
+  doubles the most expensive part of the run, and the user can ask for it.
+  Without an introduction, show:
+  1. the `**Verdict:**`, `**Target:**` and `**Summary:**` lines, copied exactly;
+  2. one line per finding, in the report's order:
+     `F1 · High · security/sql_injection · src/db/users.py:88 — <the Problem, in at most ~15 words>`;
+  3. one line for the suggestions: `Suggestions: F7 <3–6 words>; F8 …`;
+  4. the Coverage section's "Not checked / limits" line, if it says anything;
+  5. the reviewer's stamp line, copied exactly;
+  6. one closing line: "Ask for the full report for the scenarios and fixes."
+- Don't rewrite, soften or re-rank findings, don't change severities, and don't
+  add findings of your own. Keep the verdict exactly as written.
+- **Show the full report verbatim** instead (from its `# Code review` heading to
+  the end) when the user asked for the full or detailed report, when they ask
+  for it afterwards, or when you post it anywhere. You already have it, so don't
+  start the reviewer again for that.
+- If you have something to add, such as a pass that couldn't run, put one
+  short line after the relay.
 - **Check the stamp.** The report should end with *Reviewed by the code-reviewer
   subagent.* If it doesn't, because the subagent didn't run or you reviewed
   inline, say so in one line after the report: "Note: this review was done
   inline, not by the code-reviewer subagent (starting it failed: <the error>)."
-- **Then add the verifier's `## Independent verification` table**, also verbatim,
-  *after* the reviewer's stamp line. Never drop or move the stamp.
-  For every finding it **Refuted**, add one line below the table naming the
-  finding and saying the verifier disputes it. If every finding behind a
+- **Then add the verifier's result** *after* the reviewer's stamp line: one
+  line listing the findings it confirmed, then one line per finding it
+  Refuted or left Uncertain, with its reason in at most ~15 words. End with the
+  verifier's stamp line, copied exactly. Show its full `## Independent
+  verification` table only with the full report. Never drop or move a stamp.
+  Each Refuted line says plainly that the verifier disputes that finding. If every finding behind a
   "Changes requested" verdict was refuted, say that the verdict may not hold.
   Don't silently delete findings either way. The user decides.
 - **Don't change any code.** Afterwards, offer to fix specific findings (e.g.

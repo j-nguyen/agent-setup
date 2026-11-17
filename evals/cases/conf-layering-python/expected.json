@@ -1,0 +1,33 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/customer-summary.md",
+  "steps_note": null,
+  "verdict_any": ["Does not conform"],
+  "checklist": {
+    "C1": ["Conforms"],
+    "C2": ["Deviated", "Partial"],
+    "C3": ["Deviated", "Partial"],
+    "C4": ["Conforms"],
+    "C5": ["Conforms", "Partial", "Deviated"],
+    "C6": ["Conforms"],
+    "C7": ["Conforms"]
+  },
+  "must_find": [
+    {"id": "handler-imports-storage", "item": "C3", "file": "app/handlers/customers.py",
+     "summary": "Boundary violation (D2): app/handlers/customers.py imports `orders_repo` from app.storage and get_recent_orders calls orders_repo.list_recent_for_customer directly instead of going through a services/ function (the planned `recent_orders` service function doesn't exist).",
+     "recommend_any": ["Fix code"]},
+    {"id": "sql-aggregate-instead-of-python", "item": "C2", "file": "app/services/customers.py",
+     "summary": "D1 said to compute the summary in the service by loading rows with list_for_customer and summing in Python with no new SQL; the code instead adds a SQL aggregate `summarize_for_customer` (COUNT/COALESCE(SUM)/MAX) in orders_repo, called from the service. This is the rejected option B, but it is equal or better (one row back, still behind the service), so the plan should be updated rather than the code.",
+     "recommend_any": ["Update plan", "Discuss"]}
+  ],
+  "nice_to_find": [
+    {"id": "limit-logic-in-handler", "file": "app/handlers/customers.py",
+     "summary": "Limit defaulting/capping (D4) lives in the handler rather than in the planned `recent_orders` service function; behavior matches, placement differs."}
+  ],
+  "must_not_flag": [
+    {"id": "private-summary-helper", "summary": "The new private helper `_to_summary_dict` (and `require_customer`) inside app/services/customers.py is a supporting change within the planned service, not drift."},
+    {"id": "handler-imports-errors", "summary": "app/handlers/customers.py importing ValidationError from app.errors is explicitly allowed by the plan's Boundaries (any layer may import app/errors.py)."},
+    {"id": "tests-import-storage", "summary": "tests/test_customers.py importing app.storage to seed data is not a boundary violation; the rule applies to app/handlers/ only."},
+    {"id": "order-by-id-tiebreak", "summary": "list_recent_for_customer ordering by `created_at DESC, id DESC` is still newest first (a tiebreak), consistent with C6."}
+  ]
+}

@@ -1,0 +1,33 @@
+{"kind": "conformance",
+ "plan": "docs/plans/profile-read-cache.md",
+ "steps_note": null,
+ "verdict_any": ["Does not conform", "Conforms with deviations"],
+ "checklist": {
+  "C1": ["Deviated", "Missing"],
+  "C2": ["Deviated", "Missing", "Partial"],
+  "C3": ["Deviated", "Partial", "Missing"],
+  "C4": ["Conforms"],
+  "C5": ["Conforms"],
+  "C6": ["Conforms", "Partial"],
+  "C7": ["Conforms"]
+ },
+ "must_find": [
+  {"id": "redis-instead-of-lru", "item": "C1", "file": "src/lib/redisCache.ts",
+   "summary": "D1 says to reuse the existing in-process LruCache from src/lib/cache.ts, but the implementation adds a Redis-backed RedisProfileCache and wires it in src/server.ts; LruCache is not used for profiles. This is the option the plan explicitly rejected (B).",
+   "recommend_any": ["Fix code", "Discuss"]},
+  {"id": "new-dependency-and-service", "item": "C2", "file": "package.json",
+   "summary": "The change adds the ioredis runtime dependency and a Redis server requirement (REDIS_URL), contradicting the stated non-goal 'No new services or dependencies' and D1. An undocumented architectural decision.",
+   "recommend_any": ["Fix code", "Discuss"]}
+ ],
+ "nice_to_find": [
+  {"id": "no-entry-bound", "file": "src/server.ts",
+   "summary": "D2's 5,000-entry bound isn't implemented: Redis keys only have EX 60, so memory use isn't bounded the way the plan requires (C3)."},
+  {"id": "invalidate-on-update-gap", "item": null, "file": "src/profiles/service.ts",
+   "summary": "Plan gap: the plan says nothing about invalidating the cache when a profile is updated; the code deletes profile:<id> in updateProfile. Fine as is; worth recording in the plan."}
+ ],
+ "must_not_flag": [
+  {"id": "typescript-bump", "summary": "decoy: typescript devDependency bumped 5.6.3 -> 5.8.2 is planned step 1, not an unplanned dependency."},
+  {"id": "types-file", "summary": "decoy: src/profiles/types.ts holding the ProfilePatch type alias is a type-only supporting change, not drift."},
+  {"id": "fake-cache-tests", "summary": "decoy: tests using an in-memory FakeCache with a fake clock satisfy C7 and D4; they are not a problem."},
+  {"id": "key-format", "summary": "decoy: keys are built as `profile:${id}`, which matches C4."}
+ ]}

@@ -1,0 +1,37 @@
+{"kind": "conformance",
+ "plan": "docs/plans/subscriptions.md",
+ "steps_note": null,
+ "verdict_any": ["Does not conform"],
+ "checklist": {
+  "C1": ["Missing", "Deviated"],
+  "C2": ["Deviated", "Partial", "Missing"],
+  "C3": ["Conforms"],
+  "C4": ["Deviated", "Partial"],
+  "C5": ["Conforms", "Partial", "Deviated"],
+  "C6": ["Conforms"],
+  "C7": ["Conforms", "Partial"]
+ },
+ "must_find": [
+  {"id": "missing-unique", "item": "C1", "file": "migrations/003_subscriptions.sql",
+   "summary": "The subscriptions table has no UNIQUE (account_id, plan_id) constraint (D1). Duplicate subscriptions are possible, and subscribe's INSERT ... ON CONFLICT (account_id, plan_id) will fail at runtime in Postgres because no matching unique constraint exists.",
+   "recommend_any": ["Fix code"]},
+  {"id": "status-nullable-no-check", "item": "C2", "file": "migrations/003_subscriptions.sql",
+   "summary": "status is declared `text DEFAULT 'active'`: nullable and with no CHECK limiting it to trialing/active/past_due/canceled (D2).",
+   "recommend_any": ["Fix code"]},
+  {"id": "index-wrong-columns", "item": "C4", "file": "migrations/004_subscriptions_status_index.sql",
+   "summary": "The index is on (status) alone instead of (account_id, status) as D3 requires, so the per-account active lookup isn't served (the plan explicitly rejected a status-only index).",
+   "recommend_any": ["Fix code"]}
+ ],
+ "nice_to_find": [
+  {"id": "on-conflict-breaks", "file": "app/subscriptions.py",
+   "summary": "Explicitly notes that ON CONFLICT (account_id, plan_id) errors without the unique constraint, so subscribe is broken, not merely unprotected."},
+  {"id": "tests-dont-catch", "file": "tests/test_subscriptions.py",
+   "summary": "Tests use a fake connection that only checks SQL text, so they can't catch the missing constraint."}
+ ],
+ "must_not_flag": [
+  {"id": "index-name", "summary": "decoy: the index name ix_subscriptions_status differs from the plan's suggested name; the plan marks names as suggestions. Flagged only if the NAME itself is presented as a problem (the wrong columns are the real issue)."},
+  {"id": "column-order", "summary": "decoy: column order in CREATE TABLE differs from the plan's listing (plan_id before account_id, status last)."},
+  {"id": "migration-filenames", "summary": "decoy: migration file names (003_subscriptions.sql, 004_subscriptions_status_index.sql) differ from the plan's suggested names."},
+  {"id": "concurrently-marker", "summary": "decoy: the index migration correctly uses CREATE INDEX CONCURRENTLY with the -- migrate: no-transaction marker; that part conforms."}
+ ],
+ "forbidden_command_substrings": []}

@@ -1,0 +1,34 @@
+{
+  "kind": "conformance",
+  "plan": "docs/plans/user-signup.md",
+  "steps_note": "Only steps 1 and 2 are done so far; the handler and the welcome email come later.",
+  "verdict_any": ["Does not conform"],
+  "checklist": {
+    "C1": ["Conforms"],
+    "C2": ["Conforms"],
+    "C3": ["Conforms"],
+    "C4": ["Conforms"],
+    "C5": ["Missing", "Partial"],
+    "C6": ["Conforms"],
+    "C7": ["Partial", "Missing"],
+    "C8": ["Not yet"],
+    "C9": ["Not yet"],
+    "C10": ["Not yet"],
+    "C11": ["Not yet"]
+  },
+  "must_find": [
+    {"id": "password-length-not-enforced", "item": "C5", "file": "internal/signup/service.go",
+     "summary": "Register never checks the password length: ErrWeakPassword and MinPasswordLen are declared but never used, so a short password (e.g. \"abc\") is hashed and stored. Step 2 requires len(password) >= 12 to be rejected with ErrWeakPassword before hashing (D2, R2).",
+     "recommend_any": ["Fix code"]},
+    {"id": "no-short-password-test", "item": "C7", "file": "internal/signup/service_test.go",
+     "summary": "The signup tests cover normalization, invalid email, hashing and duplicates but have no short-password test, which the test plan and step 2's 'every validation rule is enforced and tested' require.",
+     "recommend_any": ["Fix code"]}
+  ],
+  "nice_to_find": [],
+  "must_not_flag": [
+    {"id": "handler-not-yet", "summary": "There is no internal/httpapi/signup.go or POST /signup route; that is step 3, which the user said isn't done. It must be Not yet, not Missing."},
+    {"id": "mailer-not-yet", "summary": "No Mailer interface or welcome email; that is step 4 (Not yet)."},
+    {"id": "test-hasher", "summary": "prefixHasher in service_test.go is a supporting test double; it doesn't mean plaintext is stored in production."},
+    {"id": "injectable-now", "summary": "The Service.Now clock field and NewService constructor are supporting details for CreatedAt and testing, not undocumented decisions worth flagging."}
+  ]
+}

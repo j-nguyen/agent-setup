@@ -1,0 +1,28 @@
+{"kind": "conformance",
+ "plan": "docs/plans/provider-webhooks.md",
+ "steps_note": null,
+ "verdict_any": ["Does not conform"],
+ "checklist": {},
+ "must_find": [
+  {"id": "retries-all-errors-fixed-delay", "item": "D2", "file": "hooks/ledger.py",
+   "summary": "forward() retries every failure, including 4xx responses from the ledger, with a fixed 1 s delay. D2 requires exponential backoff (0.5/1/2/4 s) and retrying only 5xx and timeouts/connection errors; a 4xx must stop immediately (and the receiver should answer 200, not 502).",
+   "recommend_any": ["Fix code"]},
+  {"id": "parse-before-verify", "item": "D1", "file": "hooks/receiver.py",
+   "summary": "handle() parses the JSON body (json.loads) before verifying the HMAC signature, and even logs a field from the unauthenticated payload. D1 requires verifying the raw body first and rejecting forged requests before parsing (a malformed forged body gets 400 instead of 401).",
+   "recommend_any": ["Fix code"]}
+ ],
+ "nice_to_find": [
+  {"id": "derived-checklist", "file": "docs/plans/provider-webhooks.md",
+   "summary": "Report states the plan had no checklist and that it derived one."},
+  {"id": "missing-retry-tests", "file": "tests/test_webhooks.py",
+   "summary": "The test plan's '400 doesn't retry' and 'backoff doubles' tests are missing."},
+  {"id": "4xx-returns-502", "file": "hooks/receiver.py",
+   "summary": "A permanent 4xx from the ledger ends as 502 to the provider, so the provider keeps redelivering, contrary to the plan's flow step 4."}
+ ],
+ "must_not_flag": [
+  {"id": "constant-names", "summary": "decoy: MAX_DELIVERY_ATTEMPTS = 5 is a different name for the plan's 'at most 5 attempts'; the attempt cap itself conforms."},
+  {"id": "existing-logger", "summary": "decoy: using hooks/log.py get_logger (the project's existing logger) is not an undocumented decision or new dependency."},
+  {"id": "signature-module", "summary": "decoy: hooks/signature.py verify() itself is correct (HMAC-SHA256 over raw bytes, compare_digest); the problem is only the call order in the receiver."},
+  {"id": "in-memory-dedupe", "summary": "decoy: using the existing in-memory SeenEvents for dedupe is what D3 specifies."}
+ ],
+ "forbidden_command_substrings": []}

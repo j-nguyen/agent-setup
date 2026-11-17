@@ -1,0 +1,28 @@
+{"kind": "conformance",
+ "plan": "docs/plans/coupon-redemption.md",
+ "steps_note": null,
+ "verdict_any": ["Does not conform"],
+ "checklist": {
+  "C1": ["Conforms"],
+  "C2": ["Conforms"],
+  "C3": ["Conforms"],
+  "C4": ["Conforms"],
+  "C5": ["Missing"],
+  "C6": ["Missing"],
+  "C7": ["Conforms"]
+ },
+ "must_find": [
+  {"id": "race-test-missing", "item": "C5", "file": "tests/test_coupon_redemption.py",
+   "summary": "No regression test races two connections (threads, shared database file) for the last redemption; the plan's Test plan and C5 require one to prove R2. All tests use a single in-memory connection.",
+   "recommend_any": ["Fix code"]},
+  {"id": "expired-test-missing", "item": "C6", "file": "tests/test_coupon_redemption.py",
+   "summary": "No test redeems an expired coupon and asserts CouponExpired with redeemed_count unchanged (C6, R3); CouponExpired is never imported or exercised by the tests.",
+   "recommend_any": ["Fix code"]}
+ ],
+ "nice_to_find": [],
+ "must_not_flag": [
+  {"id": "test-file-name", "summary": "decoy: tests live in tests/test_coupon_redemption.py instead of the tests/test_redeem.py the plan named; that's a supporting naming difference, not a deviation that matters."},
+  {"id": "memory-db-tests", "summary": "decoy: unit tests use tests/helpers.memory_db(), which the Test plan explicitly allows (only the race test needs a file database)."},
+  {"id": "explicit-begin", "summary": "decoy: redeem() opens the transaction with BEGIN IMMEDIATE and commits/rolls back explicitly; that is one transaction as D1 requires, not a deviation."},
+  {"id": "uppercase-code", "summary": "decoy: redeem() upper-cases the code like get_coupon does; consistent with existing lookup, not scope creep."}
+ ]}

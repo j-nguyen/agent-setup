@@ -1,0 +1,1 @@
+Sending the welcome email during signup is slow (a couple of seconds when SMTP is sluggish) and sometimes it fails, which blows up the whole signup. Let's move it to the background. Can you plan how we should do it?

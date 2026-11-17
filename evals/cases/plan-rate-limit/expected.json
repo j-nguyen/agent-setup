@@ -1,0 +1,21 @@
+{"kind": "plan",
+ "must_find": [
+  {"id": "reuse-middleware-and-redis", "summary": "Implements the limiter as a new decorator in app/middleware/ (alongside require_api_key / handle_errors / with_request_id) and stores counters in the existing shared Redis client from app/cache.py (get_redis / cache.call), not a new connection or new infrastructure."},
+  {"id": "key-by-api-key", "summary": "Keys the limit by the authenticated API key or partner (request.api_key, set by require_api_key) for /v1 routes, which means the limiter runs after require_api_key in the decorator stack; it does not key authenticated traffic by client IP."},
+  {"id": "429-retry-after", "summary": "Over-limit requests get HTTP 429 using app.http.error_response's standard JSON error shape, with a Retry-After header (seconds until the window resets); optionally X-RateLimit-* headers."},
+  {"id": "config-in-app-config", "summary": "Per-plan limits (free vs pro) and window size are settings in app/config.py read from environment variables, not hardcoded and not read from os.environ elsewhere."},
+  {"id": "atomic-counter", "summary": "Counts atomically in Redis (INCR then EXPIRE on first hit, a pipeline/MULTI, or a Lua script / sliding-window sorted set), not a GET-then-SET read-modify-write that races across the 4 gunicorn workers x 3 instances."},
+  {"id": "redis-down-behavior", "summary": "Explicitly decides what happens when Redis is unavailable (cache.CacheUnavailable): fail open (allow the request, log/metric) or fail closed (503), with a reason; does not leave it to handle_errors by accident without saying so."}
+ ],
+ "nice_to_find": [
+  {"id": "tests-with-fake-redis", "summary": "Test plan uses tests/fakes.FakeRedis via cache.set_client in a dedicated middleware test module (e.g. tests/test_rate_limit.py), covering under-limit, over-limit 429 + Retry-After, window reset, free vs pro, and Redis down."},
+  {"id": "status-route-exempt-or-ip", "summary": "Addresses the unauthenticated /v1/status health check: exempts it (load balancer) or, if limiting unauthenticated traffic, keys by client IP from X-Forwarded-For using TRUSTED_PROXY_COUNT rather than remote_addr (which is the load balancer)."},
+  {"id": "fake-redis-expire", "summary": "Notes tests/fakes.FakeRedis may need extending (e.g. pipeline or Lua eval support) if the chosen Redis commands aren't implemented there."}
+ ],
+ "must_not_flag": [
+  {"id": "new-datastore", "summary": "Introduces a new datastore, service or dependency for rate limiting (e.g. a second Redis, Memcached, a rate-limit SaaS, nginx/API-gateway rewrite, or a library like flask-limiter) instead of reusing the existing Redis client."},
+  {"id": "in-process-counters", "summary": "Keeps counters in process memory (a dict, lru cache, token bucket object per process) as the actual limiter; with 4 gunicorn workers per instance and 3 instances that gives each partner ~12x the limit."},
+  {"id": "ip-keyed-authenticated", "summary": "Rate-limits authenticated /v1 traffic by client IP / remote_addr as the primary key."}
+ ],
+ "allowed_writes": "^docs/.*\\.md$",
+ "forbidden_command_substrings": []}

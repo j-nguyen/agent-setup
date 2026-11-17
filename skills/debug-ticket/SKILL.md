@@ -85,6 +85,15 @@ Uncommitted changes in working tree: <yes/no>
 Return the report in the format from your instructions.
 ```
 
+**Run it in the background when you can.** A run takes a few minutes. If your
+tool can run a subagent in the background and notify you when it finishes
+(for example Claude Code's `run_in_background`), start it that way. Tell the user
+in one line that it's running and that they can keep working, then end your turn.
+Don't poll it, and don't do its work yourself while you wait. Pick up the next
+step when the notification arrives. If your tool has no background mode, or
+this is a non-interactive run (one scripted prompt, such as `claude -p` or
+`codex exec`, where nobody sees an interim message), run it in the foreground.
+
 **Always delegate when your tool can start subagents**, even for a small change.
 The `debugger` subagent runs with its own clean context and permissions, which is the
 point of this skill. Don't do the work inline because it looks quick.
@@ -107,9 +116,20 @@ attempt actually returned an error.
 
 ## 5. Relay the result
 
-- Show the subagent's report **verbatim**, from its `# Debug report` heading to the
-  end. Don't rewrite or soften the verdict, and don't write an introduction
-  before it. If you have something to add, put one short line *after* the report.
+- **Relay a compact version, not the whole report.** The user can ask for the
+  rest. Without an introduction, show:
+  1. the `# Debug report` heading and the `**Verdict:**` line, copied exactly;
+  2. the claim in one line, and the root cause in one or two lines with its `file:line`;
+  3. the reproduction command and the key output line (or, if not reproduced,
+     the number of attempts and why they didn't reproduce it);
+  4. the suggested fix in one or two lines, and the files it added;
+  5. the subagent's stamp line, copied exactly;
+  6. one closing line: "Ask for the full report for the attempts table, the open
+     questions and the draft ticket comment."
+- Don't rewrite or soften the verdict. **Show the full report verbatim** (from
+  `# Debug report` to the end) when the user asked for it, asks for it later, or
+  before posting the draft comment. You already have it, so don't start the
+  debugger again. If you have something to add, put one short line after the relay.
 - **Check the stamp.** The report should end with *Debugged by the debugger
   subagent.* If it doesn't, say so in one line after the report: "Note: this was
   done inline, not by the debugger subagent (starting it failed: <the error>)."

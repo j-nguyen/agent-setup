@@ -8,6 +8,8 @@ description: >
   Not a bug / Blocked with exact commands, output, root cause and a suggested fix.
   It never modifies existing files. Used by the debug-ticket skill.
 access: edit
+claude:
+  tools: Read, Grep, Glob, Bash, Write
 codex:
   model_reasoning_effort: high
 ---

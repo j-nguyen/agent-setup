@@ -52,6 +52,15 @@ Python standard library.
   Not a bug / Blocked) with the exact commands, output, root cause and a suggested
   fix. It only *adds* files (a repro test, `.debug/<ID>/`) and never edits existing
   code or posts to the tracker unless you ask. It also has a verify-fix mode.
+- **`plan-architecture` skill + `architect` subagent**: plan before you build,
+  then check the build against the plan. In plan mode the subagent
+  investigates the codebase, weighs 2–3 options and writes a plan (decisions,
+  design, implementation steps, test plan, risks, open questions and a
+  conformance checklist) to `docs/plans/<slug>.md`, the only file it may touch,
+  then returns a short summary. In
+  review mode it checks a diff, branch or PR against that checklist and reports
+  deviations, unplanned changes and plan gaps, saying for each whether to fix the
+  code or update the plan. `review-changes` also picks up these plans as its spec.
 - **`finding-verifier` subagent**: an independent skeptic that tries to disprove
   each High/Medium review finding. `review-changes` runs it automatically.
 - **`record-feature` skill + `browser-recorder` subagent**: records a feature
@@ -64,6 +73,7 @@ Python standard library.
 - **`agent-setup` skill**: lets any agent manage this repo for you ("add a skill
   for X to all my agents", "why isn't my subagent showing up?").
 - `.agents/review.md`: extra review rules and conventions (also read by the finding verifier)
+- `.agents/architecture.md`: planning conventions (where plans live, architectural rules)
 - `.agents/debug.md`: debugging conventions (where repro tests go, which commands to run)
 - `.agents/rules.md`: rules for all of the above
 

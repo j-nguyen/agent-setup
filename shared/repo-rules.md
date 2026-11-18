@@ -6,7 +6,7 @@ Teams can tailor you per repository with Markdown files in a `.agents/` folder:
 |---|---|
 | `.agents/review.md` | the code reviewer and the finding verifier |
 | `.agents/debug.md` | the debugger |
-| `.agents/architecture.md` | the architect (e.g. where plans live, required plan sections, architectural rules) |
+| `.agents/architecture.md` | the architect (e.g. where plans live, required plan sections, architectural rules) and the implementer |
 | `.agents/rules.md` | all of them |
 
 How to find and apply them:

@@ -3,17 +3,18 @@ name: plan-architecture
 description: >
   Plan and architect a change before building it, then check the build against
   the plan. Use for "plan this feature", "how should we build X?", "design /
-  architect X", "write a design doc / tech spec / RFC / ADR", "let's plan before
-  coding", "what's the best approach for X in this codebase?", "update the plan".
+  architect X", "write a design doc / tech spec / RFC", "let's plan before
+  coding", "what's the best approach for X in this codebase?", "update the plan",
+  "plan out PROJ-123 / this ticket / this spec" (it fetches the ticket).
   Also use for "does this match the plan?", "review against the design / plan /
   spec doc", "did we build what we planned?", "check for architecture drift",
-  "are steps 1–3 done per the plan?". Use it even for a small repo or a
-  small change: don't plan or check conformance inline. It delegates to the `architect`
-  subagent, which never changes code: in plan mode it investigates the codebase,
-  weighs options and writes a plan with decisions, steps, risks and a
-  conformance checklist to docs/plans/; in review mode it checks code against that checklist and reports
-  deviations and whether to fix the code or update the plan. For a general bug,
-  security or performance review, use review-changes instead.
+  "are steps 1–3 done per the plan?". Use it even for a small change: don't
+  plan or check conformance inline. It delegates to the `architect` subagent,
+  which never changes code: in plan mode it writes a plan with decisions,
+  steps, risks and a conformance checklist to docs/plans/; in review mode it
+  checks code against that checklist and reports deviations and whether to fix
+  the code or update the plan. For a general bug, security or performance
+  review, use review-changes instead.
 ---
 
 # Plan architecture
@@ -40,6 +41,16 @@ the feature. If the repo already keeps design docs somewhere else (`docs/design/
 `docs/adr/`, `rfcs/`), or a `.agents/architecture.md` or `.agents/rules.md`
 file says where plans go, use that instead.
 
+**Plans from a ticket** are working documents: the ticket stays the durable
+record. Save them outside the repo, in the temp plans directory
+`${AGENT_PLANS_DIR:-/tmp/agent-plans}/<repo>/<ticket-id>-<slug>.md`, where
+`<repo>` is the repository's directory name and the ticket ID is lowercase
+(`proj-123-bulk-export.md`). Any agent can fetch it from there later (the
+implement-plan skill and review mode look there). Use the repo's plans
+directory instead if the user asks to keep it in the repo, or the repo's rules
+say ticket plans go there. `/tmp` is cleared on reboot, so tell the user, and
+offer to copy the plan into the repo if they want to keep it.
+
 ## Plan mode
 
 ### 1. Gather the ask
@@ -48,8 +59,26 @@ Collect, verbatim where possible: what the user wants built, the requirements,
 constraints, non-goals, and any ticket or doc they pointed to. Check whether a
 plan for this already exists in the plans directory; if so, this is a revision.
 
+**Ticket or spec.** The work often comes from a ticket. If the user hasn't
+given one (an ID like `PROJ-123`, `ENG-45` or `#123`, a Jira, GitHub, GitLab or
+Linear URL, or pasted ticket text) or a spec doc, **ask whether there is one**
+to plan from. Make it the first of your clarifying questions, not a separate
+round. Skip the question if the user said there's no ticket or to just go
+ahead, or if the request itself is clearly the whole spec.
+
+When there is a ticket, fetch it the way the debug-ticket skill does: work out
+the tracker from the ID or URL, then follow the matching section of
+`references/trackers.md` in the debug-ticket skill's directory (a sibling of
+this skill's directory; read only that section). Collect the title,
+description, **every comment**, acceptance criteria, labels, linked tickets,
+PRs and attachments' titles. If fetching fails, ask the user to paste it. The
+ticket's description and acceptance criteria become the requirements; its
+comments often hold decisions and constraints, so pass them along too. For a
+spec doc (a file path or pasted text), read it and pass it verbatim.
+
 If something that would **change the architecture** is unclear, ask the user
-once, in one message, at most 3–4 short questions. Typical ones: expected scale,
+once, in one message, at most 3–4 short questions (including the ticket
+question). Typical ones: expected scale,
 what it must integrate with, hard constraints (deadline, no new infrastructure),
 and what's explicitly out of scope. Don't ask what the code can answer, and
 don't ask if the user said to just go ahead. The subagent records remaining
@@ -61,19 +90,21 @@ unknowns as assumptions and open questions.
 Mode: plan
 Repository: <absolute path>
 Today's date: <YYYY-MM-DD>
+Ticket: <ID (tracker) + URL, or "none">
 Goal and requirements (verbatim from the user / ticket / docs):
 <text>
+Ticket comments (verbatim, oldest first, with author and date): <text, or "none">
 Constraints and non-goals: <text, or "none stated">
 Answers to clarifying questions: <verbatim, or "none asked">
-Plan file: <path in the plans directory; for a revision, the existing plan's path>
+Plan file: <absolute path: the plans directory, or the temp plans directory for a ticket; for a revision, the existing plan's path>
 Revision: <the requested change, or "no: new plan">
 Write the plan to the plan file and return the summary from your instructions.
 ```
 
-Pick the plan file path before you brief: `<plans dir>/<slug>.md`, or the
-existing plan's path for a revision. If the user asked not to save files in the
-repo, use a path in your scratch or temp directory instead and show the plan in
-chat afterwards.
+Pick the plan file path before you brief (see "Where plans live"):
+`<plans dir>/<slug>.md`, the temp plans path for a ticket, or the existing
+plan's path for a revision. Create its directory first if needed. If the user
+asked not to save files in the repo, use the temp plans directory too.
 
 ### 3. Relay
 
@@ -91,20 +122,26 @@ chat afterwards.
   decisions (D-ids) and the number of steps. Don't paste the whole plan unless
   they ask; it's in the file. If the summary lists instructions it didn't
   follow, mention them.
+- **Offer a rendered view**, in one line, only in an interactive session. If
+  your tool can publish a page (for example Claude's artifacts), offer to
+  publish the plan as one; it's private by default, but it does leave the
+  machine, so only publish after a yes. Otherwise offer to open the file
+  (`xdg-open` / `open`) or leave it as the path. Never publish unasked.
 - **List the open questions and assumptions** and ask the user to settle them.
   Update the plan with their answers (edit the file directly for small answers;
   re-brief the architect with the existing plan if an answer changes the design).
 - When the user approves it, set `**Status:** Accepted`.
-- Then offer to implement it step by step. If you implement it, follow the
-  steps in order and keep the plan's IDs in mind; don't silently change a
-  decision. If you have to, tell the user and add it to the Deviation log.
+- Then offer to implement it with the implement-plan skill, which checks the
+  plan is solid and hands it to the `implementer` subagent on a cheaper model.
+  If the user says yes, switch to that skill. Don't implement it inline here.
 
 ## Review mode
 
 ### 1. Find the plan
 
-Use the plan the user named. Otherwise look in the plans directory for one that
-matches the branch name, the PR, or the feature the user mentioned. If several
+Use the plan the user named. Otherwise look in the plans directory, and in the
+temp plans directory for this repo (see "Where plans live"), for one that
+matches the ticket ID, the branch name, the PR, or the feature the user mentioned. If several
 could match, ask which one. If none exists, say so and offer to write a plan
 first, or to run review-changes for a general review instead.
 

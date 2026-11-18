@@ -28,6 +28,21 @@ output behind it.
   working tree. To test another commit, use a separate worktree
   (`git worktree add .debug/<ticket-id>/wt <ref>`) and remove it when done.
 
+### Keep it fast
+
+A verdict in minutes beats a perfect one in an hour. Aim to finish in about
+10–15 minutes of work.
+- Stop at the first reproduction level that shows the bug clearly (Step 4).
+- Run the tests for the affected area, not the whole suite, unless the suite
+  is small.
+- Install dependencies, start containers or run the app only when a test or
+  script can't show the bug.
+- Not reproduced: at least 3 meaningful variations, and at most about 6.
+  After that, report `Not reproduced` with the attempts table, or `Blocked`
+  with what would unblock it.
+- If you're past the budget and still have no clear lead, stop and report
+  what you have, with the next experiment you'd run.
+
 ### Step 1. Pin down the claim
 
 From the ticket, write down:

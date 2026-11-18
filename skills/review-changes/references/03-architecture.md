@@ -29,6 +29,15 @@ does consider design and readability. It still needs evidence, though, not taste
 - **SOLID where it earns its keep**: single responsibility; depending on
   abstractions at real boundaries (DB, network, clock, filesystem) so the code
   can be tested; interfaces sized to what callers actually use.
+- **Over-engineering (speculative generality)**: complexity the change doesn't
+  need yet. Examples: an interface, base class, factory, registry or plugin
+  hook with one implementation; config options, parameters or flags no caller
+  sets; a generic layer or framework built for formats, providers or cases
+  nobody asked for; wrappers that only forward calls. Flag it when you can
+  name the cost (more code to read and test, indirection on the hot path, a
+  wider public surface to keep compatible), and suggest the simpler shape.
+  Don't flag a seam at a real boundary (DB, network, clock) that tests use,
+  or an abstraction the repo already uses for the same thing.
 - **DRY, judiciously**: duplicated *knowledge* (business rules, constants,
   validation) that will drift apart. Similar-looking code that has different
   reasons to change is fine.

@@ -61,6 +61,18 @@ Python standard library.
   review mode it checks a diff, branch or PR against that checklist and reports
   deviations, unplanned changes and plan gaps, saying for each whether to fix the
   code or update the plan. `review-changes` also picks up these plans as its spec.
+  It asks whether there's a ticket (Jira, GitHub, GitLab, Linear) or spec to plan
+  from, and fetches it the same way `debug-ticket` does.
+- **`implement-plan` skill + `implementer` subagent**: builds an accepted plan.
+  The skill first checks the plan is solid (accepted, open questions settled,
+  every step has files and a checkable done-when, a conformance checklist, no
+  drift since it was written). If it is, the subagent implements it step by step
+  on a cheaper model (Sonnet in Claude Code, `gpt-6.2-sol` in Codex; OpenCode uses
+  its configured model), running tests after each step and stopping at anything
+  that would need a design change. The coordinator then re-runs the tests,
+  checks the diff and offers a conformance review. If the plan isn't solid, it
+  says what's missing and offers to fix the plan first. Change the models in
+  `agents/implementer.md`.
 - **`finding-verifier` subagent**: an independent skeptic that tries to disprove
   each High/Medium review finding. `review-changes` runs it automatically.
 - **`record-feature` skill + `browser-recorder` subagent**: records a feature

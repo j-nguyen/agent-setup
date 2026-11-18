@@ -12,6 +12,12 @@ Ground every claim about the current system in code you read (`file:line`).
 - Note the forces that shape the design: expected scale and volume, latency,
   consistency and durability needs, security and privacy, compatibility with
   existing consumers, deadlines, team conventions, and stated non-goals.
+- **A ticket is the spec.** If the brief includes a ticket, its description
+  and acceptance criteria are the requirements: one R-id each, tagged with
+  where it came from (`R2: … (ticket AC3)`). Decisions and constraints in its
+  comments count too, unless a later comment overrides them. Don't add
+  requirements the ticket doesn't ask for; put ideas beyond it under Open
+  questions.
 - If the brief includes an existing plan to revise, keep its IDs stable. Mark
   changed decisions and checklist items instead of renumbering.
 
@@ -31,7 +37,8 @@ Read before you design. Find and cite:
 - **Build and test**: how tests run, and which kinds exist (unit, integration, e2e).
 
 Stop investigating when more reading wouldn't change the design. Don't read the
-whole repo.
+whole repo, and don't run the test suite: knowing how tests run is enough to
+plan. For a small change, a handful of files is usually all you need.
 
 ### P3. Consider options
 
@@ -49,6 +56,14 @@ whole repo.
   a risk you name; if it doesn't, leave it out. Don't invent abstractions,
   layers or services the requirements don't need (YAGNI). Prefer boring,
   proven technology and the stack the repo already uses.
+- **Patterns and best practices.** Reach for an established pattern or
+  practice when it solves a requirement or a named risk, and name it so the
+  implementer and reviewer know what to look for: an adapter around a
+  third-party API, a repository for data access, an outbox for side effects
+  after commit, idempotency keys for retried calls, a strategy only when there
+  are several real variants today. The pattern the repo already uses wins over
+  a textbook one. Never add a pattern for its own sake: a plain function in the
+  right module is often the best design.
 - **Size the plan to the change.** Rough budgets: a small change (one module, a
   flag, a field) gets one option, at most ~3 steps, ~5 checklist items and no
   rollout or observability sections, about one screen. A typical feature gets
@@ -81,6 +96,10 @@ Cover what applies; skip sections that don't, rather than padding them.
   validation, secrets handling, data exposure.
 - **Performance**: expected volumes, query shapes and the indexes they need,
   algorithmic complexity on the hot path, caching and its invalidation.
+- **Readability**: how the new code should read for the next person. Where
+  each piece goes, names that match the repo's vocabulary, functions with one
+  job, errors handled the way the repo already does, no clever code. A few
+  concrete bullets, not a style guide.
 - **Observability**: logs, metrics and alerts someone will need at 3 a.m.
 - **Rollout**: feature flags, backwards compatibility, deploy order, rollback.
 
@@ -129,6 +148,7 @@ tables and one-line bullets to prose.
 
 **Status:** Draft
 **Date:** <YYYY-MM-DD>
+**Ticket:** <ID + URL from the brief; omit the line if none>
 **Scope:** <one line: what this covers>
 
 ## Goal
@@ -162,6 +182,10 @@ tables and one-line bullets to prose.
 <tables/fields/indexes, migration and rollback>
 ### Flow and failure handling
 <numbered main path, then failure paths>
+### Patterns and readability
+| Pattern / practice | Where | Why (R-id or risk) |
+|---|---|---|
+<then 2–4 readability bullets: names, placement, function shape. For a small change, skip the table and keep 1–3 bullets>
 ### Security, performance, observability
 <only what applies>
 ### Rollout

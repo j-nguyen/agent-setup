@@ -57,6 +57,9 @@ I won't be around to answer questions, so make reasonable assumptions instead of
 
 ARCH_EXPLICIT = "Use the plan-architecture skill.\n\n"
 
+# Plan cases with a ticket.md give only the ticket ID; the ticket is served from a mock Jira.
+TICKET_PLAN_PROMPT = "Can you plan out {ticket} before anyone starts building it?"
+
 # --tracker mode: only an ID is given; the agent has to fetch the ticket from a mock tracker.
 TRACKER_PROMPTS = {
     "jira": "Can you check whether PROJ-101 reproduces in this repo?",
@@ -98,12 +101,17 @@ def ran_command_containing(raw: str, needle: str) -> bool:
 
 
 def agent_cmd(agent: str, prompt: str, repo: Path, out_dir: Path, model: str | None,
-              debug: bool = False, plan: bool = False) -> list[str]:
+              debug: bool = False, plan: bool = False, plans_dir: Path | None = None,
+              ticket: bool = False) -> list[str]:
     if agent == "claude" and plan:
         # Plan mode saves the plan file (Write); editing existing files stays blocked.
+        # Ticket plans go to the temp plans directory outside the repo, and fetching the
+        # ticket reads credentials from env vars, which needs plain Bash in -p mode.
+        tools = CLAUDE_TOOLS + " Write Bash(mkdir:*)" + (" Bash" if ticket else "")
         cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
-               "--no-session-persistence", "--allowedTools", CLAUDE_TOOLS + " Write Bash(mkdir:*)",
+               "--no-session-persistence", "--allowedTools", tools,
                "--disallowedTools", "Edit NotebookEdit"]
+        cmd += ["--add-dir", str(plans_dir)] if plans_dir else []
         return cmd + (["--model", model] if model else [])
     if agent == "claude":
         # The debugger may add files (Write); nobody may edit existing ones (Edit).
@@ -119,7 +127,8 @@ def agent_cmd(agent: str, prompt: str, repo: Path, out_dir: Path, model: str | N
         return cmd + (["--model", model] if model else [])
     if agent == "codex":
         # Codex's sandbox blocks network by default; --tracker runs need it to reach the mock API.
-        net = ["-c", "sandbox_workspace_write.network_access=true"] if debug and getattr(_ARGS, "tracker", None) else []
+        net = (["-c", "sandbox_workspace_write.network_access=true"]
+               if ticket or (debug and getattr(_ARGS, "tracker", None)) else [])
         # No --ephemeral: Codex can't spawn subagents without the parent session's rollout
         # ("collab spawn failed: ... no rollout found for thread id"), so ephemeral runs
         # silently fall back to reviewing inline.
@@ -570,6 +579,15 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
         repo = Path(tmp) / "repo"
         build_repo(case, repo)
         mock, extra_env = None, {}
+        plans_dir = Path(tmp) / "agent-plans"  # the temp plans directory for ticket plans
+        ticket_plan = kind == "plan" and (case / "ticket.md").exists()
+        if kind == "plan":
+            plans_dir.mkdir()
+            extra_env["AGENT_PLANS_DIR"] = str(plans_dir)
+        if ticket_plan:
+            from mock_tracker import MockTracker
+            mock = MockTracker((case / "ticket.md").read_text(), expected["ticket"], "acme/billing", 101).start()
+            extra_env |= {"JIRA_BASE_URL": mock.url, "JIRA_EMAIL": "eval@example.com", "JIRA_API_TOKEN": "eval-token"}
         if debug and args.tracker:
             from mock_tracker import MockTracker  # evals/ is on sys.path when run as a script
             mock = MockTracker((case / "ticket.md").read_text(), "PROJ-101", "acme/billing", 101).start()
@@ -594,12 +612,14 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
             prompt = (ARCH_EXPLICIT if args.explicit else "") + CONFORMANCE_PROMPT.format(
                 plan=expected["plan"], steps=f" {steps}" if steps else "")
         elif kind == "plan":
-            prompt = (ARCH_EXPLICIT if args.explicit else "") + PLAN_PROMPT.format(
-                request=(case / "request.md").read_text().strip())
+            request = (TICKET_PLAN_PROMPT.format(ticket=expected["ticket"]) if ticket_plan
+                       else (case / "request.md").read_text().strip())
+            prompt = (ARCH_EXPLICIT if args.explicit else "") + PLAN_PROMPT.format(request=request)
         else:
             spec = (case / "spec.md").read_text()
             prompt = (PROMPT_EXPLICIT if args.explicit else PROMPT).format(spec=spec)
-        cmd = agent_cmd(agent, prompt, repo, out_dir, args.models.get(agent), debug, kind == "plan")
+        cmd = agent_cmd(agent, prompt, repo, out_dir, args.models.get(agent), debug, kind == "plan",
+                        plans_dir if kind == "plan" else None, ticket_plan)
         t0 = time.time()
         try:
             # Some CLIs (OpenCode) read the project dir from $PWD rather than the real cwd.
@@ -612,7 +632,7 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
             raw = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
             err, code = "TIMEOUT", -1
         elapsed = time.time() - t0
-        fetched = mock.fetched(args.tracker) if mock else None
+        fetched = mock.fetched("jira" if ticket_plan else args.tracker) if mock else None
         if mock:
             (out_dir / "tracker-requests.txt").write_text("\n".join(mock.requests) + "\n")
             mock.stop()
@@ -623,7 +643,7 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
         head_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo,
                                      capture_output=True, text=True).stdout.strip()
         if kind == "plan":
-            plan_text, plan_files = read_new_plans(repo, expected)
+            plan_text, plan_files = read_new_plans(repo, expected, plans_dir)
         if arch:
             graded_text = plan_text or extract_report(agent, raw, out_dir)
             cites = check_citations(graded_text, repo)
@@ -671,6 +691,12 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
                       else (DEBUG_STAMP if debug else STAMP) in report),
         "citations": cites,
         "plan_saved": bool(plan_text) if kind == "plan" else None,
+        # where the plan landed: "temp" (the temp plans directory) or "repo"; ticket plans belong in temp
+        "plan_location": (("temp" if any(f.startswith("temp:") for f in plan_files) else "repo")
+                          if kind == "plan" and plan_text else None),
+        "plan_location_ok": (None if kind != "plan" or "plan_location" not in expected or not plan_text
+                             else any(f.startswith("temp:") for f in plan_files) == (expected["plan_location"] == "temp")),
+        "ticket_fetched": fetched if ticket_plan else None,
         "plan_lines": len(plan_text.splitlines()) if kind == "plan" else None,
         # review cases: did the finding-verifier run; --tracker debug runs: was the ticket fetched
         "verified": fetched if debug else VERIFIER_STAMP in report,
@@ -698,13 +724,19 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
     return result
 
 
-def read_new_plans(repo: Path, expected: dict) -> tuple[str, list[str]]:
-    """Contents of plan docs the run added or changed (untracked or modified .md under docs/)."""
+def read_new_plans(repo: Path, expected: dict, plans_dir: Path | None = None) -> tuple[str, list[str]]:
+    """Contents of plan docs the run added or changed (untracked or modified .md under docs/), plus
+    any plan saved in the temp plans directory (listed as `temp:<path>`)."""
     out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo,
                          capture_output=True, text=True).stdout
     files = sorted(l[3:].strip().strip('"') for l in out.splitlines()
                    if l[3:].strip().endswith(".md") and l[3:].strip().startswith("docs/"))
     texts = [f"<!-- file: {f} -->\n" + (repo / f).read_text(errors="replace") for f in files if (repo / f).is_file()]
+    if plans_dir and plans_dir.is_dir():
+        for f in sorted(plans_dir.rglob("*.md")):
+            rel = f.relative_to(plans_dir).as_posix()
+            files.append(f"temp:{rel}")
+            texts.append(f"<!-- file: $AGENT_PLANS_DIR/{rel} -->\n" + f.read_text(errors="replace"))
     return "\n\n".join(texts), files
 
 
@@ -785,8 +817,8 @@ def fmt_arch(results: list[dict]) -> list[str]:
         dims = ("grounding", "proportionality", "decisions", "checklist", "actionability")
         lines += ["## Planning (plan mode)", "",
                   "| case | agent | trial | must-cover | nice | anti-patterns | " + " | ".join(dims) +
-                  " | format | saved | lines | skill | delegated | safe | cites ok | time | tokens |",
-                  "|---" * (20) + "|"]
+                  " | format | saved | ticket | lines | skill | delegated | safe | cites ok | time | tokens |",
+                  "|---" * (21) + "|"]
         for r in sorted(plan, key=lambda r: (r["case"], r["agent"], r["trial"])):
             s = r.get("score")
             if not s:
@@ -795,7 +827,7 @@ def fmt_arch(results: list[dict]) -> list[str]:
             rub = s.get("rubric") or {}
             lines.append(f"| {r['case']} | {r['agent']} | {r['trial']} | {s['must_found']} | {s['nice_found']} | "
                          f"{s['decoys_flagged']} | " + " | ".join(str(rub.get(d, '–')) for d in dims) +
-                         f" | {yn(s['format_ok'])} | {yn(r.get('plan_saved'))} | {r.get('plan_lines')} | "
+                         f" | {yn(s['format_ok'])} | {_saved(r)} | {_ticket(r)} | {r.get('plan_lines')} | "
                          f"{yn(r['used_skill'])} | {yn(r['delegated'])} | {yn(not r['repo_modified'])} | "
                          f"{_cite(r)} | {r['seconds']}s | {_tok(r)} |")
         lines += ["", "| agent | runs | must-cover | anti-patterns | " + " | ".join(dims) +
@@ -814,6 +846,24 @@ def fmt_arch(results: list[dict]) -> list[str]:
                 f"{_frac([str(c['ok']) + '/' + str(c['total']) for c in ci])} |")
         lines.append("")
     return lines
+
+
+def _yn(b) -> str:
+    return "–" if b is None else ("✅" if b else "❌")
+
+
+def _saved(r: dict) -> str:
+    """✅/❌, plus where the plan landed when the case says where it belongs."""
+    if not r.get("plan_saved"):
+        return _yn(False)
+    if r.get("plan_location_ok") is None:
+        return _yn(True)
+    return f"{_yn(r['plan_location_ok'])} {r.get('plan_location')}"
+
+
+def _ticket(r: dict) -> str:
+    """Ticket plan cases: was the ticket fetched from the mock tracker."""
+    return "–" if r.get("ticket_fetched") is None else _yn(r["ticket_fetched"])
 
 
 def fmt_summary(results: list[dict], args) -> str:
@@ -894,7 +944,9 @@ def main() -> int:
         if not shutil.which(a):
             print(f"{a} CLI not found on PATH", file=sys.stderr)
             return 2
-    cases = sorted(p for p in CASES.iterdir() if (p / "expected.json").exists())
+    # implement cases have their own runner (evals/implement.py)
+    cases = sorted(p for p in CASES.iterdir() if (p / "expected.json").exists()
+                   and json.loads((p / "expected.json").read_text()).get("kind", "review") in SKILL_FOR)
     if args.cases:
         wanted = set(args.cases.split(","))
         cases = [c for c in cases if c.name in wanted]

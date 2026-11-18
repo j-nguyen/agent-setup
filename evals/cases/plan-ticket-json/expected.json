@@ -1,0 +1,56 @@
+{
+ "kind": "plan",
+ "ticket": "PROJ-101",
+ "plan_location": "temp",
+ "must_find": [
+  {
+   "id": "ticket-as-spec",
+   "summary": "Requirements come from ticket PROJ-101: its acceptance criteria (JSON on stdout, same shape as export's report object, text output unchanged, empty period valid JSON, a test) appear as requirements, and the plan records the ticket ID."
+  },
+  {
+   "id": "modify-report-command",
+   "summary": "Adds a --json flag to the existing `report` subparser in tally/cli.py (build_parser) and branches in cmd_report; no new command, module tree or entry point."
+  },
+  {
+   "id": "reuse-serialize",
+   "summary": "Produces the JSON with the existing tally/serialize.py (to_json / to_data) on the existing Report from reports.by_project, the same path `export` already uses, as the tech lead's comment asks."
+  },
+  {
+   "id": "follows-tech-lead",
+   "summary": "Follows the later tech-lead comment over the earlier product comment: JSON only, no formatter framework; CSV/YAML/XML are out of scope (non-goal or open question, pointing to PROJ-140)."
+  },
+  {
+   "id": "json-test",
+   "summary": "Adds a test in tests/test_cli.py that runs `report --json` via main(argv), parses stdout with json.loads, and checks fields, including the empty-period case."
+  }
+ ],
+ "nice_to_find": [
+  {
+   "id": "stdout-only-json",
+   "summary": "Notes that with --json nothing else may be printed to stdout, so the output stays valid for jq; the empty period prints valid JSON rather than 'No entries in this period.'"
+  },
+  {
+   "id": "readability-notes",
+   "summary": "Gives a few concrete readability notes that fit the repo (e.g. keep cli.py wiring-only, reuse existing names), without a generic style guide."
+  }
+ ],
+ "must_not_flag": [
+  {
+   "id": "formatter-architecture",
+   "summary": "Proposes a formatter plugin architecture or abstraction layer: a Formatter base class/protocol, a registry, multiple formatter classes, a Strategy/Factory pattern for output formats, or a generic --format option framework beyond what was asked."
+  },
+  {
+   "id": "pattern-name-dropping",
+   "summary": "Lists design patterns that the change doesn't need (Strategy, Factory, Visitor, Plugin, Builder, Dependency Injection container) as part of the design, decisions or steps."
+  },
+  {
+   "id": "heavyweight-plan",
+   "summary": "Plan is heavyweight for the request: multiple options tables compared at length, rollout/feature flags, observability or migration sections with content, or more than ~5 implementation steps."
+  },
+  {
+   "id": "new-dependency",
+   "summary": "Adds a third-party dependency (e.g. click, rich, orjson, pydantic), against the stdlib-only rule in AGENTS.md."
+  }
+ ],
+ "forbidden_command_substrings": []
+}

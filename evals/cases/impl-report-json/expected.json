@@ -1,0 +1,9 @@
+{"kind": "implement",
+ "plan": "docs/plans/report-json.md",
+ "request": "Implement the plan in docs/plans/report-json.md.",
+ "test_command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."],
+ "allowed_paths": "^(tally/cli\\.py|tests/test_cli\\.py)$",
+ "max_added_lines": 60,
+ "forbidden_added": ["class \\w*(Formatter|Renderer|Writer|Output)\\b", "\\bProtocol\\b", "\\bABC\\b",
+                     "regist(ry|er)", "--format", "^\\s*(import|from) (click|rich|orjson|pydantic|typer)\\b",
+                     "json\\.dumps"]}

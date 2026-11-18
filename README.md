@@ -52,13 +52,13 @@ Python standard library.
   Not a bug / Blocked) with the exact commands, output, root cause and a suggested
   fix. It only *adds* files (a repro test, `.debug/<ID>/`) and never edits existing
   code or posts to the tracker unless you ask. It also has a verify-fix mode.
-- **`plan-architecture` skill + `architect` subagent**: plan before you build,
-  then check the build against the plan. In plan mode the subagent
-  investigates the codebase, weighs 2–3 options and writes a plan (decisions,
+- **`plan-architecture` skill + `architect` and `plan-reviewer` subagents**:
+  plan before you build, then check the build against the plan. In plan mode
+  the `architect` subagent investigates the codebase, weighs 2–3 options and writes a plan (decisions,
   design, implementation steps, test plan, risks, open questions and a
   conformance checklist) to `docs/plans/<slug>.md`, the only file it may touch,
   then returns a short summary. In
-  review mode it checks a diff, branch or PR against that checklist and reports
+  review mode the read-only `plan-reviewer` subagent checks a diff, branch or PR against that checklist and reports
   deviations, unplanned changes and plan gaps, saying for each whether to fix the
   code or update the plan. `review-changes` also picks up these plans as its spec.
   It asks whether there's a ticket (Jira, GitHub, GitLab, Linear) or spec to plan

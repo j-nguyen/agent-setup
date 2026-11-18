@@ -39,6 +39,10 @@ Read before you design. Find and cite:
 Stop investigating when more reading wouldn't change the design. Don't read the
 whole repo, and don't run the test suite: knowing how tests run is enough to
 plan. For a small change, a handful of files is usually all you need.
+**Read each file once.** Start with a file listing and search for the symbols
+you need, then read the relevant files in as few calls as you can. Don't open a
+file again that you've already printed in full; cite line numbers from what
+you already have.
 
 ### P3. Consider options
 
@@ -64,11 +68,20 @@ plan. For a small change, a handful of files is usually all you need.
   are several real variants today. The pattern the repo already uses wins over
   a textbook one. Never add a pattern for its own sake: a plain function in the
   right module is often the best design.
-- **Size the plan to the change.** Rough budgets: a small change (one module, a
-  flag, a field) gets one option, at most ~3 steps, ~5 checklist items and no
-  rollout or observability sections, about one screen. A typical feature gets
-  ~3–6 steps and ~6–12 checklist items. Go beyond that only for changes that
-  really span several components.
+- **Size the plan to the change.** These are hard limits, not suggestions;
+  pick the tier before you write:
+
+  | Tier | Example | Options | Steps | Checklist | Length |
+  |---|---|---|---|---|---|
+  | Small | one module, a flag, a field | 1 (no table) | ≤ 3 | ≤ 5 | ≤ 60 lines (~3 KB) |
+  | Typical | a feature across a few modules | 2–3 | 3–6 | 6–12 | ≤ 150 lines (~10 KB) |
+  | Large | spans several services or a data migration | 2–3 | ≤ 10 | ≤ 20 | ≤ 250 lines (~16 KB) |
+
+  A small plan has only Goal, Requirements, Current state, Decisions,
+  Implementation steps, Test plan, Open questions (if any) and the Conformance
+  checklist. Use the Large tier only when the change really spans several
+  components, and say so in **Scope**. If you're over the limit, cut prose
+  before cutting decisions or checklist items.
 - **Optional hardening is not the design.** Extra robustness the requirements
   don't ask for (crash-recovery fencing, snapshot isolation, staged rollouts,
   runbooks) goes under Risks or Open questions as an option with its cost,
@@ -140,8 +153,12 @@ edits files (a write, edit or apply-patch tool, not a shell), write the plan to
 the plan file named in the brief and nothing else; for a revision, edit that
 file in place. **If you have no such tool, don't attempt a write at all**: put
 the full plan in your final message (see the end of this section). Either way,
-write the plan in Markdown, in the format below. Leave out sections that don't apply. Keep it tight: prefer
-tables and one-line bullets to prose.
+write the plan in Markdown, in the format below, within the length limit for
+its tier (P3). Sections marked *(optional)* appear only when they carry a real
+decision for this change; never write a heading just to say "n/a" or "none".
+Prefer tables and one-line bullets to prose, don't restate the requirements in
+later sections, and write each fact once: refer to it by its R-, D- or C-id
+afterwards. The *(optional)* markers are for you; leave them out of the plan.
 
 ```markdown
 # Plan: <title>
@@ -162,7 +179,7 @@ tables and one-line bullets to prose.
 ## Current state
 <what exists today that this builds on, with `file:line` references; at most ~8 bullets>
 
-## Options considered
+## Options considered *(optional)*
 | Option | Summary | Pros | Cons |
 |---|---|---|---|
 **Chosen:** <option>, because <reason>.
@@ -170,25 +187,25 @@ tables and one-line bullets to prose.
 ## Decisions
 - **D1:** <decision>. *Why:* <reason>. *Rejected:* <alternative and why>.
 
-## Design
-### Components
+## Design *(optional for a small change)*
+### Components *(optional)*
 | Component | Path | New/changed | Responsibility |
 |---|---|---|---|
-### Boundaries
+### Boundaries *(optional)*
 - <checkable dependency rules>
-### Interfaces
+### Interfaces *(optional)*
 <signatures, routes, schemas, events: short code blocks are fine>
-### Data model
+### Data model *(optional)*
 <tables/fields/indexes, migration and rollback>
-### Flow and failure handling
+### Flow and failure handling *(optional)*
 <numbered main path, then failure paths>
-### Patterns and readability
+### Patterns and readability *(optional)*
 | Pattern / practice | Where | Why (R-id or risk) |
 |---|---|---|
 <then 2–4 readability bullets: names, placement, function shape. For a small change, skip the table and keep 1–3 bullets>
-### Security, performance, observability
+### Security, performance, observability *(optional)*
 <only what applies>
-### Rollout
+### Rollout *(optional)*
 <flags, compatibility, deploy order, rollback>
 
 ## Implementation steps
@@ -197,11 +214,11 @@ tables and one-line bullets to prose.
 ## Test plan
 - <level>: <what and why>
 
-## Risks
+## Risks *(optional)*
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 
-## Open questions
+## Open questions *(optional)*
 - **Q1:** <question>. *Recommended:* <default>. *If not:* <what changes>.
 
 ## Conformance checklist
@@ -210,7 +227,7 @@ tables and one-line bullets to prose.
 ## Deviation log
 <empty in a new plan; review mode adds accepted deviations here>
 
-## Noticed along the way
+## Noticed along the way *(optional)*
 <optional: pre-existing issues outside this plan's scope, one line each>
 ```
 

@@ -45,7 +45,8 @@ skip planning, this skill doesn't apply: just do the work normally.
 
 ## 2. Check the plan is solid
 
-Read the plan and check each of these:
+Read the plan and check each of these. **Read the plan, not the code**: the
+implementer reads the source itself, so opening it here only doubles the cost.
 
 | Check | Solid when |
 |---|---|
@@ -53,7 +54,7 @@ Read the plan and check each of these:
 | Open questions | none left, or each has a recorded answer, or the user says to use the recommended defaults |
 | Steps in scope | each names its files and has a *Done when* someone can check |
 | Checklist | a conformance checklist exists and tags items with steps |
-| Freshness | the files the steps name still exist, and `git log --since=<plan date> -- <those files>` shows nothing that changes the design |
+| Freshness | a file listing shows the files the steps name still exist, and `git log --oneline --since=<plan date> -- <those files>` shows nothing that changes the design (look at a commit's diff only if its message suggests it might) |
 
 Also look at the steps in scope for work where a mistake is expensive and the
 plan leaves room for judgement: a data migration or backfill without a
@@ -135,8 +136,11 @@ before you relay it. Don't redo the implementation.
   Files changed. Flag any file the report doesn't mention, and any change to
   the plan file.
 - Run the test command once. If it fails and the report said it passed, say so.
-- Skim the diff for anything that obviously contradicts a decision (a D-id) or
-  a boundary rule. Don't do a full review here; that's step 8.
+- **Don't read the whole diff or the source.** Never run `git diff` without
+  paths, and don't open files to "see the code". Run `git diff -- <path>` only
+  for files a boundary rule or a decision (D-id) is about, or that the report
+  doesn't mention, and look only for anything that obviously contradicts the
+  plan. If nothing qualifies, skip it. The full review is step 8.
 
 ## 7. Relay
 

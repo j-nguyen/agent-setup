@@ -78,7 +78,7 @@ DELEGATION_RE = re.compile(
     r'\\*"(?:subagent_type|agent_type|agent|role|subagent)\\*"\s*:\s*\\*"code-reviewer\\*"')
 STAMP = "Reviewed by the code-reviewer subagent."
 DEBUG_STAMP = "Debugged by the debugger subagent."
-CONFORMANCE_STAMP = "Reviewed against the plan by the architect subagent."
+CONFORMANCE_STAMP = "Reviewed against the plan by the plan-reviewer subagent."
 PLAN_STAMP = "Planned by the architect subagent."
 SKILL_FOR = {"review": "review-changes", "debug": "debug-ticket",
              "conformance": "plan-architecture", "plan": "plan-architecture"}
@@ -667,7 +667,7 @@ def run_one(case: Path, agent: str, trial: int, run_dir: Path, args) -> dict:
     report = extract_report(agent, raw, out_dir)
     final_message = report
     (out_dir / "relay.md").write_text(final_message)
-    # Grade the subagents' own reports (reviewer + verifier, debugger, architect) when found,
+    # Grade the subagents' own reports (reviewer + verifier, debugger, plan reviewer) when found,
     # since the coordinator relays only a compact version of them.
     stamps = (STAMP, VERIFIER_STAMP, DEBUG_STAMP, CONFORMANCE_STAMP)
     full = [o for o in subagent_outputs(agent, raw, t0) if any(st in o for st in stamps)]

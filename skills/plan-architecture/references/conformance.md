@@ -159,4 +159,4 @@ Verdict rules:
 
 End the report with this exact line, so the coordinator can tell the subagent produced it:
 
-*Reviewed against the plan by the architect subagent.*
+*Reviewed against the plan by the plan-reviewer subagent.*

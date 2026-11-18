@@ -9,18 +9,18 @@ description: >
   Also use for "does this match the plan?", "review against the design / plan /
   spec doc", "did we build what we planned?", "check for architecture drift",
   "are steps 1–3 done per the plan?". Use it even for a small change: don't
-  plan or check conformance inline. It delegates to the `architect` subagent,
-  which never changes code: in plan mode it writes a plan with decisions,
-  steps, risks and a conformance checklist to docs/plans/; in review mode it
-  checks code against that checklist and reports deviations and whether to fix
-  the code or update the plan. For a general bug, security or performance
+  plan or check conformance inline. Plans go to the `architect` subagent,
+  which never changes code and writes a plan with decisions, steps, risks and
+  a conformance checklist to docs/plans/. Reviews go to the read-only
+  `plan-reviewer` subagent, which reports deviations from that checklist and
+  whether to fix the code or update the plan. For a general bug, security or performance
   review, use review-changes instead.
 ---
 
 # Plan architecture
 
-You are the coordinator. You talk to the user, brief the `architect` subagent,
-save the plan and relay results. Don't do the design or the conformance review
+You are the coordinator. You talk to the user, brief the subagent (`architect`
+for plans, `plan-reviewer` for reviews), and relay results. Don't do the design or the conformance review
 yourself unless subagents aren't available (see "Delegate").
 
 Pick the mode from the request:
@@ -158,7 +158,7 @@ merge base. If nothing differs, say there's nothing to review and stop.
 If the user said only some steps are done ("steps 1–3", "the backend part"),
 pass that along so later items count as `Not yet`. Otherwise all steps are in scope.
 
-### 4. Brief the architect
+### 4. Brief the plan reviewer
 
 ```
 Mode: review
@@ -183,9 +183,9 @@ Return the report in the format from your instructions.
 - Don't rewrite, soften or re-rank anything. **Show the full report verbatim**
   (from `# Architecture conformance` to the end) when the user asked for it,
   asks for it later, or before applying its suggested plan updates. You already
-  have it, so don't start the architect again. Put anything you need to add in
+  have it, so don't start the plan reviewer again. Put anything you need to add in
   one short line after the relay.
-- Check it ends with *Reviewed against the plan by the architect subagent.* If
+- Check it ends with *Reviewed against the plan by the plan-reviewer subagent.* If
   not, say in one line that the review was done inline and why.
 - **Don't change code or the plan yet.** Offer the next steps:
   - apply the report's "Suggested plan updates" to the plan file (including
@@ -207,18 +207,20 @@ this is a non-interactive run (one scripted prompt, such as `claude -p` or
 
 **Always delegate when your tool can start subagents**, even for a small change
 or a small repo you could read yourself in a minute.
-The subagent works in its own clean context and never changes code (it writes
-only the plan file), which is the point of this skill. It already has its instructions, so don't open
-`references/` unless you're doing the work yourself.
+The subagent works in its own clean context and never changes code (the
+architect writes only the plan file; the plan reviewer writes nothing), which
+is the point of this skill. It already has its instructions, so don't open
+`references/` unless you're doing the work yourself. Plan mode goes to
+`architect`, review mode to `plan-reviewer`:
 
-- **Claude Code**: the Agent/Task tool with `subagent_type: "architect"`.
-- **Codex**: spawn a subagent with agent type / role `architect`.
-- **OpenCode**: the task tool with the `architect` subagent (or `@architect`).
-- **Other tools with named subagents**: use the one named `architect`.
-- **Only if your tool can't start subagents at all**, or `architect` isn't
+- **Claude Code**: the Agent/Task tool with `subagent_type: "architect"` or `"plan-reviewer"`.
+- **Codex**: spawn a subagent with agent type / role `architect` or `plan-reviewer`.
+- **OpenCode**: the task tool with the `architect` or `plan-reviewer` subagent (or `@architect`, `@plan-reviewer`).
+- **Other tools with named subagents**: use the one with that name.
+- **Only if your tool can't start subagents at all**, or the subagent isn't
   installed: do it yourself. Read and follow `references/plan.md` (plan mode)
   or `references/conformance.md` (review mode) from this skill's directory.
   Change no files apart from the plan file.
 
-If starting `architect` fails, retry once with the same brief. If it fails
+If starting the subagent fails, retry once with the same brief. If it fails
 again, do it yourself and keep the exact error for the note when you relay.

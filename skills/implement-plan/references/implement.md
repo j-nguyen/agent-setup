@@ -22,7 +22,11 @@ redesign.
 For each step in scope, in the plan's order:
 1. Make the change the step describes, in the files it names. Keep the diff
    to what the step needs. No drive-by refactors, renames or reformatting.
-2. Write or update the tests the step and the test plan call for.
+   Make edits with your file-editing tool, not shell rewrites (`sed -i`,
+   heredocs, scripts that rewrite files); use the shell to run things.
+2. Write or update the tests the step and the test plan call for. Don't
+   change an existing test's expected values to make it pass unless the plan
+   calls for that behavior change; if you must, record it as a deviation.
 3. Run the tests for the files this step touched (one test file or module,
    not the whole suite) and fix what you broke.
 4. Check the step's *Done when* and the checklist items tagged with this step.

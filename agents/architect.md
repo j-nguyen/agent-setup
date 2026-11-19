@@ -11,7 +11,7 @@ description: >
 access: edit
 claude:
   model: opus
-  tools: Read, Grep, Glob, Bash, Write, Edit
+  tools: Read, Grep, Glob, Bash, Write, Edit, mcp__codegraph__codegraph_explore
 codex:
   model_reasoning_effort: medium
 ---
@@ -44,5 +44,7 @@ the `plan-reviewer` subagent.
 <!-- include: shared/untrusted-content.md -->
 
 <!-- include: shared/repo-rules.md -->
+
+<!-- include: shared/code-search.md -->
 
 <!-- include: skills/plan-architecture/references/plan.md -->

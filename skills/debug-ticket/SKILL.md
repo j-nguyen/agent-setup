@@ -140,3 +140,7 @@ attempt actually returned an error.
     write access: `gh issue comment`, Jira or GitLab API, or Linear's
     write-enabled MCP endpoint.
   - Offer to delete `.debug/<ID>/` and, if no fix is wanted, the repro test.
+  - If the report has a "Test commands" section, offer once to save it as a
+    `## Tests` section in `.agents/rules.local.md`, the same way the
+    implement-plan skill does: personal, listed in `.git/info/exclude`, and
+    in the main checkout when you're in a worktree.

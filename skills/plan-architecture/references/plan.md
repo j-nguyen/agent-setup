@@ -39,10 +39,6 @@ Read before you design. Find and cite:
 Stop investigating when more reading wouldn't change the design. Don't read the
 whole repo, and don't run the test suite: knowing how tests run is enough to
 plan. For a small change, a handful of files is usually all you need.
-**Read each file once.** Start with a file listing and search for the symbols
-you need, then read the relevant files in as few calls as you can. Don't open a
-file again that you've already printed in full; cite line numbers from what
-you already have.
 
 ### P3. Consider options
 

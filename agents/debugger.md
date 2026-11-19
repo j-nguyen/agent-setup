@@ -9,7 +9,7 @@ description: >
   It never modifies existing files. Used by the debug-ticket skill.
 access: edit
 claude:
-  tools: Read, Grep, Glob, Bash, Write
+  tools: Read, Grep, Glob, Bash, Write, mcp__codegraph__codegraph_explore
 codex:
   model_reasoning_effort: high
 ---
@@ -38,6 +38,8 @@ Principles:
 <!-- include: shared/untrusted-content.md -->
 
 <!-- include: shared/repo-rules.md -->
+
+<!-- include: shared/code-search.md -->
 
 <!-- include: skills/debug-ticket/references/reproduce.md -->
 

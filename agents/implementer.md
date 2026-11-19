@@ -41,4 +41,6 @@ Principles:
 
 <!-- include: shared/repo-rules.md -->
 
+<!-- include: shared/code-search.md -->
+
 <!-- include: skills/implement-plan/references/implement.md -->

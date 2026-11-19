@@ -10,7 +10,7 @@ description: >
 access: read-only
 claude:
   model: opus
-  tools: Read, Grep, Glob, Bash
+  tools: Read, Grep, Glob, Bash, mcp__codegraph__codegraph_explore
 codex:
   model_reasoning_effort: medium
 ---
@@ -34,5 +34,7 @@ Principles:
 <!-- include: shared/untrusted-content.md -->
 
 <!-- include: shared/repo-rules.md -->
+
+<!-- include: shared/code-search.md -->
 
 <!-- include: skills/plan-architecture/references/conformance.md -->

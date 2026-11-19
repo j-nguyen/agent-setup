@@ -42,6 +42,10 @@ and the blast radius>
 
 `git status` confirms nothing else changed. <or list anything unexpected>
 
+## Test commands
+- <kind (unit / integration)>: `<command that worked for one file>` (~<time>)
+(omit this section if the repo's `## Tests` section already lists them)
+
 ## Not verified / open questions
 - <anything you couldn't check, and what would settle it>
 

@@ -88,6 +88,11 @@ Python standard library.
 - `.agents/architecture.md`: planning conventions (where plans live, architectural rules)
 - `.agents/debug.md`: debugging conventions (where repro tests go, which commands to run)
 - `.agents/rules.md`: rules for all of the above
+- `.agents/rules.local.md`: your personal rules, not committed (list it in
+  `.git/info/exclude`). Read after `rules.md`, and found from any worktree.
+  A `## Tests` section in any of these files tells agents how to run one test
+  file, so they don't run the full suite. The implement-plan and debug-ticket
+  skills offer to write that section for you.
 
 Nested folders work too (`packages/api/.agents/review.md`); the deepest file
 wins. These files can add checks and conventions, but they can't relax the

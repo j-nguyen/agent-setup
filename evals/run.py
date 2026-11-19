@@ -452,7 +452,11 @@ def run_judge(judge: str, expected: dict, report: str, workdir: Path, model: str
                "--tools", ""] + (["--model", model] if model else [])
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=workdir,
                            stdin=subprocess.DEVNULL)
-        text = json.loads(r.stdout).get("result", "")
+        out = json.loads(r.stdout)
+        # Newer Claude Code versions print a list of events. The answer is in the "result" event.
+        if isinstance(out, list):
+            out = next((e for e in reversed(out) if e.get("type") == "result"), {})
+        text = out.get("result", "")
     elif judge == "codex":
         out = workdir / "judge.txt"
         cmd = ["codex", "exec", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",

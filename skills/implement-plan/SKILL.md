@@ -122,9 +122,17 @@ unless you're doing the work yourself.
 If starting `implementer` fails, retry once with the same brief. If it fails
 again, tell the user and offer to implement on the main model.
 
-**Large plans**: if more than ~6 steps are in scope, brief the steps in batches
-of 3–4 and run the next batch after the previous report comes back clean. A
+**Large plans**: if more than ~8 steps are in scope, brief the steps in batches
+of 4–5 and run the next batch after the previous report comes back clean. A
 cheaper model does better with a smaller slice.
+
+**Continue the same implementer** for the next batch, and after a blocker is
+resolved, when your tool can send a follow-up message to a finished subagent
+(for example Claude Code's SendMessage with the agent's id). It already has the
+plan and the code in context, so it doesn't read them again. Send only what
+changed: the next steps in scope, and any new answers or plan revisions. Start
+a new implementer only if your tool can't continue one, or the plan was
+rewritten.
 
 ## 6. Check the work
 
@@ -135,7 +143,11 @@ before you relay it. Don't redo the implementation.
 - Run `git status --short` and `git diff --stat`, and compare with the report's
   Files changed. Flag any file the report doesn't mention, and any change to
   the plan file.
-- Run the test command once. If it fails and the report said it passed, say so.
+- **Don't run the full test suite again.** The implementer already ran it,
+  and the report has the commands and results. Run only the test files that
+  cover the changed files, once, if the report lists them. If a run fails and
+  the report said it passed, say so. Run the full suite yourself only if the
+  report has no test results, or the user asks.
 - **Don't read the whole diff or the source.** Never run `git diff` without
   paths, and don't open files to "see the code". Run `git diff -- <path>` only
   for files a boundary rule or a decision (D-id) is about, or that the report
@@ -147,7 +159,7 @@ before you relay it. Don't redo the implementation.
 Without an introduction, show:
 1. the `**Result:**` line, copied exactly;
 2. the steps as one line (`Steps: 1 Done, 2 Done, 3 Blocked`);
-3. the test result from your own run;
+3. the test results: your own run of the changed test files, or the report's results if you ran none;
 4. each deviation and blocker, one line each, with its plan id;
 5. anything your check in step 6 found;
 6. the stamp line, copied exactly.
@@ -168,3 +180,10 @@ Offer, but do none of them unasked:
   checks the code against the checklist;
 - a full review with review-changes, passing the plan file as the spec;
 - committing the change. Only commit when the user asks.
+- saving the test commands: if the report has a "Test commands" section, offer
+  once to add it as a `## Tests` section to `.agents/rules.local.md` at the
+  repository root. That file is personal and not committed. If it isn't
+  ignored yet, add `.agents/rules.local.md` to `.git/info/exclude`, never to
+  `.gitignore`. In a worktree, write both to the main checkout (the directory
+  above `git rev-parse --path-format=absolute --git-common-dir`), so every
+  worktree finds them. Later runs then use the fast commands from the start.

@@ -13,6 +13,13 @@ redesign.
 - For each step in scope, read the files it names and the code around them
   before you change anything. Follow the repo's existing style, naming, error
   handling and test layout.
+- **Load the practice packs that apply.** If the brief gives a practices
+  directory, read its `README.md` index, then only the packs that match the
+  files the steps in scope create or change (usually one or two). Read them
+  once, in the same turn as your other first reads. Apply them to the code you
+  write, as the index says: the repo's conventions and the plan win, existing
+  code isn't rewritten to comply, and no new dependencies. If the brief gives
+  no practices directory, skip this.
 - Find how tests run (the plan's test plan, the project's docs, `package.json`,
   `Makefile`, `pyproject.toml`…). Run the relevant tests once **before** you
   change anything, so you know which failures were already there.
@@ -96,6 +103,9 @@ Return this, in Markdown, and nothing else:
 
 ## Defaults used
 - Q1: <the plan's recommended default you applied>   (or omit)
+
+**Practices:** <packs you read, e.g. `typescript`, `sql`; or "none matched" / omit if no directory was given>
+
 
 ## Files changed
 <`git status --short` output for the files you touched>

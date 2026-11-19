@@ -73,6 +73,10 @@ Python standard library.
   checks the diff and offers a conformance review. If the plan isn't solid, it
   says what's missing and offers to fix the plan first. Change the models in
   `agents/implementer.md`.
+  The implementer also reads best-practice packs for the stacks it touches
+  (TypeScript, React/Next.js, web UI, SQL, Python) from
+  `skills/implement-plan/references/practices/`. Add a pack there and list it
+  in that folder's `README.md`.
 - **`finding-verifier` subagent**: an independent skeptic that tries to disprove
   each High/Medium review finding. `review-changes` runs it automatically.
 - **`record-feature` skill + `browser-recorder` subagent**: records a feature

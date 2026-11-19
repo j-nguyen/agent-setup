@@ -103,8 +103,24 @@ Write the plan to the plan file and return the summary from your instructions.
 
 Pick the plan file path before you brief (see "Where plans live"):
 `<plans dir>/<slug>.md`, the temp plans path for a ticket, or the existing
-plan's path for a revision. Create its directory first if needed. If the user
-asked not to save files in the repo, use the temp plans directory too.
+plan's path for a revision. If the user asked not to save files in the repo,
+use the temp plans directory too.
+
+**For a new plan, create the plan file before you brief**, with your
+file-writing tool (which also creates the directory), containing exactly this
+stub:
+
+```markdown
+# Plan: <title>
+
+**Status:** Draft
+<!-- plan goes here -->
+```
+
+The architect fills it with one edit. This matters for speed: some tools
+refuse a subagent's attempt to create a new file but allow it to edit an
+existing one, and a refused write means the whole plan gets written out two
+more times. For a revision, the file already exists, so skip this.
 
 ### 3. Relay
 
@@ -115,11 +131,16 @@ asked not to save files in the repo, use the temp plans directory too.
 - If the reply starts with `**Plan not saved:**` and contains the full plan
   (this is normal in tools that don't let subagents write files), save
   that plan exactly as returned, without the sign-off line, to the plan file
-  yourself. Don't edit it or re-check its claims on the way.
+  yourself, replacing the stub. Don't edit it or re-check its claims on the way.
+- If the subagent failed and no plan came back, delete the stub you created,
+  so no empty plan is left behind.
+- If the file still contains `<!-- plan goes here -->` but the summary says
+  the plan was saved, the edit didn't land: say so, and ask the architect
+  once more (same brief) rather than writing the plan yourself.
 - For a revision, show the user what changed: the new and changed decision and
   checklist ids from the summary, plus `git diff --stat` for the file.
-- Tell the user the path, then relay the summary: the approach, the key
-  decisions (D-ids) and the number of steps. Don't paste the whole plan unless
+- Tell the user the path, then relay the summary: the goal, the approach, the
+  key decisions (D-ids) and the number of steps. Don't paste the whole plan unless
   they ask; it's in the file. If the summary lists instructions it didn't
   follow, mention them.
 - **Offer a rendered view**, in one line, only in an interactive session. If

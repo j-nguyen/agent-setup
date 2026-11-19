@@ -54,7 +54,13 @@ implementer reads the source itself, so opening it here only doubles the cost.
 | Open questions | none left, or each has a recorded answer, or the user says to use the recommended defaults |
 | Steps in scope | each names its files and has a *Done when* someone can check |
 | Checklist | a conformance checklist exists and tags items with steps |
-| Freshness | a file listing shows the files the steps name still exist, and `git log --oneline --since=<plan date> -- <those files>` shows nothing that changes the design (look at a commit's diff only if its message suggests it might) |
+| Freshness | skip if the plan was written or revised in this conversation, or its **Date** is today. Otherwise the files the steps name still exist, and `git log --oneline --since=<plan date> -- <those files>` shows nothing that changes the design (look at a commit's diff only if its message suggests it might) |
+
+**Keep this to two tool calls.** Read the plan file, then run one shell
+command that gathers everything else at once: `git status --short`, the
+current branch, the repo's default branch, and, only when the freshness check
+applies, the file listing and the `git log` above. Decide from those results;
+don't run the checks one by one.
 
 Also look at the steps in scope for work where a mistake is expensive and the
 plan leaves room for judgement: a data migration or backfill without a
@@ -73,8 +79,9 @@ money. Precise steps are fine. Vague ones count as not solid.
 
 ## 3. Prepare the workspace
 
-- Note the current branch and whether there are uncommitted changes. The
-  implementer keeps them, but say so in the brief.
+- Note the current branch and whether there are uncommitted changes (you
+  already have both from step 2). The implementer keeps them, but say so in
+  the brief.
 - If you're on the repo's default branch, create a feature branch named after
   the plan slug (or the ticket ID) before delegating, unless the user said to
   stay on this branch. Tell the user in one line.
@@ -91,10 +98,16 @@ Steps in scope: <all | e.g. 1–3>
 Already done: <steps finished earlier, or "none">
 Answers to open questions: <verbatim, or "none / use the plan's defaults">
 Test command: <if known, else "find it">
+Practices: <absolute path to this skill's references/practices/ directory>
 Constraints: dependency installs <allowed from lockfile | not allowed>; <anything else the user said>
 Uncommitted changes before you start: <yes: list paths | no>
 Return the report in the format from your instructions.
 ```
+
+`Practices` points at short best-practice rule lists per stack (TypeScript,
+React/Next.js, web UI, SQL, Python). The implementer reads the index and only
+the packs that match the files it changes. Pass the path; don't read the packs
+yourself.
 
 ## 5. Delegate
 
@@ -153,14 +166,23 @@ before you relay it. Don't redo the implementation.
   for files a boundary rule or a decision (D-id) is about, or that the report
   doesn't mention, and look only for anything that obviously contradicts the
   plan. If nothing qualifies, skip it. The full review is step 8.
+- **Do the whole check in one shell command**: `git status --short`, `git
+  diff --stat`, any `git diff -- <path>` that qualifies, and the test run,
+  chained together. Then write the relay.
 
 ## 7. Relay
 
-Without an introduction, show:
-1. the `**Result:**` line, copied exactly;
+Keep it short, but make it make sense on its own to someone who hasn't read
+the plan: name what was built in plain words (the feature, the command, the
+endpoint), not only step numbers and ids. When you mention a plan id (D2, C5,
+step 3), say in a few words what it is. Without an introduction or a closing
+recap, show:
+1. the `**Result:**` line, copied exactly, followed by one plain sentence on
+   what now works (e.g. "`tally report --json` prints the report as JSON.");
 2. the steps as one line (`Steps: 1 Done, 2 Done, 3 Blocked`);
 3. the test results: your own run of the changed test files, or the report's results if you ran none;
-4. each deviation and blocker, one line each, with its plan id;
+4. each deviation and blocker, one line each, with its plan id, then the
+   `**Practices:**` line, copied exactly (omit it if the report has none);
 5. anything your check in step 6 found;
 6. the stamp line, copied exactly.
 

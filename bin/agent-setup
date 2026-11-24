@@ -289,7 +289,7 @@ MCP_TOOLS = ("claude", "codex", "opencode")
 
 
 def empty_manifest() -> dict:
-    return {"skills": [], "agents": [], "mcp": {t: [] for t in MCP_TOOLS}}
+    return {"skills": [], "agents": [], "instructions": [], "mcp": {t: [] for t in MCP_TOOLS}}
 
 
 def load_manifest() -> dict:
@@ -309,7 +309,8 @@ def save_manifest(m: dict, dry: bool) -> None:
     p = state_file()
     p.parent.mkdir(parents=True, exist_ok=True)
     out = {"skills": sorted(set(m["skills"])), "agents": sorted(set(m["agents"])),
-           "mcp": {t: sorted(set(v)) for t, v in m["mcp"].items()}}
+           "instructions": sorted(set(m["instructions"])),
+           "mcp":{t: sorted(set(v)) for t, v in m["mcp"].items()}}
     p.write_text(json.dumps(out, indent=2) + "\n")
 
 
@@ -329,8 +330,10 @@ def _read_mcp_file(f: Path, settings: dict | None = None) -> dict:
         raise ValueError(f"{f}: filename must be lowercase-hyphenated")
     try:
         text = f.read_text()
-        for k, v in (settings or {}).items():  # {placeholder} values from the local config
-            text = text.replace("{" + k + "}", str(v))
+        # {placeholder} values: the built-in `repo` (this checkout) plus the local config.
+        # Values are JSON-escaped because they are inserted into JSON text.
+        for k, v in {"repo": str(REPO), **(settings or {})}.items():
+            text = text.replace("{" + k + "}", json.dumps(str(v), ensure_ascii=False)[1:-1])
         spec = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValueError(f"{f}: invalid JSON: {e}") from e
@@ -709,6 +712,103 @@ def sync_mcp(tools: list[str], old: dict, new: dict, dry: bool, adopt: bool) -> 
     return conflicts
 
 
+# --------------------------------------------------------------------------- #
+# Managed instruction blocks: shared/memory-instructions.md -> each tool's global
+# instruction file. Only the text between our markers is ever touched.
+# --------------------------------------------------------------------------- #
+INSTR_SRC = REPO / "shared" / "memory-instructions.md"
+INSTR_BEGIN = "<!-- >>> agent-setup memory (managed; edit shared/memory-instructions.md) >>> -->"
+INSTR_END = "<!-- <<< agent-setup memory <<< -->"
+
+
+def instruction_files() -> dict[str, Path]:
+    return {"claude": home() / ".claude" / "CLAUDE.md",
+            "codex": codex_home() / "AGENTS.md",
+            "opencode": opencode_home() / "AGENTS.md"}
+
+
+def load_instruction_block() -> str | None:
+    """The managed block (markers included, no trailing newline), or None if there is no source."""
+    if not INSTR_SRC.is_file():
+        return None
+    return f"{INSTR_BEGIN}\n{INSTR_SRC.read_text(encoding='utf-8').strip()}\n{INSTR_END}"
+
+
+def _block_span(text: str, path: Path) -> tuple[int, int] | None:
+    b, e = text.find(INSTR_BEGIN), text.find(INSTR_END)
+    if b == -1 and e == -1:
+        return None
+    if b == -1 or e == -1 or e < b:
+        raise ValueError(f"{path}: agent-setup memory markers are unbalanced; fix or remove them by hand")
+    return b, e + len(INSTR_END)
+
+
+def with_block(text: str, block: str, path: Path) -> str:
+    """Replace our block in place, or append it after the existing text."""
+    span = _block_span(text, path)
+    if span:
+        return text[:span[0]] + block + text[span[1]:]
+    if not text:
+        return block + "\n"
+    sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    return text + sep + block + "\n"
+
+
+def without_block(text: str, path: Path) -> str:
+    span = _block_span(text, path)
+    if not span:
+        return text
+    before, after = text[:span[0]], text[span[1]:]
+    after = after[1:] if after.startswith("\n") else after
+    if before.endswith("\n\n"):  # the blank separator we added when appending
+        before = before[:-1]
+    return before + after
+
+
+def read_text_exact(path: Path) -> str:
+    return path.read_bytes().decode("utf-8") if path.exists() else ""
+
+
+def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool) -> None:
+    block = load_instruction_block()
+    files = instruction_files()
+    print(f"Instruction blocks ({len(tools) if block else 0}):")
+    chosen = {str(files[t]) for t in tools}
+    keep = {str(p) for t, p in files.items() if t not in tools}  # tools not in this run keep their entries
+    for t in tools:
+        path = files[t]
+        if block is None:
+            continue
+        text = read_text_exact(path)
+        out = with_block(text, block, path)
+        new["instructions"].append(str(path))
+        if out == text:
+            log("ok", path, "memory block")
+            continue
+        log("update" if path.exists() and _block_span(text, path) else ("add" if path.exists() else "create"),
+            path, "memory block")
+        if not dry:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(out.encode("utf-8"))
+    for p in sorted(set(old["instructions"]) - set(new["instructions"])):
+        if p in keep and p not in chosen:
+            new["instructions"].append(p)
+        else:
+            remove_block(Path(p), dry)
+
+
+def remove_block(path: Path, dry: bool) -> None:
+    if not path.is_file():
+        return
+    text = read_text_exact(path)
+    out = without_block(text, path)
+    if out == text:
+        return
+    log("remove", path, "memory block")
+    if not dry:
+        path.write_bytes(out.encode("utf-8"))
+
+
 def log(action: str, path: Path, detail: str = "") -> None:
     print(f"  {action:<9} {path}{'  (' + detail + ')' if detail else ''}")
 
@@ -728,6 +828,9 @@ def cmd_sync(args) -> int:
         return 2
     skills, agents = load_skills(), load_agents()
     load_mcp()  # validate everything before writing anything, so a bad file can't leave a half-done sync
+    for t in tmap:  # same for the instruction files: unbalanced markers stop the sync before any write
+        path = instruction_files()[t]
+        _block_span(read_text_exact(path), path)
     old = load_manifest()
     new = empty_manifest()
     new["mcp"] = {t: list(v) for t, v in old["mcp"].items()}  # tools not in this run keep theirs
@@ -791,6 +894,7 @@ def cmd_sync(args) -> int:
             remove_managed(Path(p), args.dry_run)
 
     conflicts += sync_mcp([t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run, args.adopt)
+    sync_instructions([t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run)
 
     save_manifest(new, args.dry_run)
     if args.dry_run:
@@ -804,6 +908,8 @@ def cmd_uninstall(args) -> int:
     m = load_manifest()
     for p in m["skills"] + m["agents"]:
         remove_managed(Path(p), args.dry_run)
+    for p in m["instructions"]:
+        remove_block(Path(p), args.dry_run)
     for tool, names in m["mcp"].items():
         if names:
             for n in names:
@@ -825,10 +931,39 @@ def cmd_status(_args) -> int:
         path = Path(p)
         state = "ok" if (path.exists() or path.is_symlink()) else "MISSING"
         print(f"  {state:<8} {p}")
+    for p in m["instructions"]:
+        path = Path(p)
+        state = "ok" if path.is_file() and _block_span(read_text_exact(path), path) else "MISSING"
+        print(f"  {state:<8} {p}  (memory block)")
     for tool, names in m["mcp"].items():
         for n in names:
             print(f"  mcp      {tool}:{n}")
     return 0
+
+
+def memory_store_root() -> Path:
+    """Where mcp/servers/memory.py keeps its files (same rule, kept in sync by hand)."""
+    if os.environ.get("AGENT_MEMORY_DIR"):
+        return Path(os.environ["AGENT_MEMORY_DIR"]).expanduser()
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return (Path(xdg).expanduser() if xdg else home() / ".local" / "share") / "agent-memory"
+
+
+def claude_auto_memory_off() -> tuple[bool, str]:
+    """Is Claude Code's built-in auto-memory off? CLAUDE_CODE_DISABLE_AUTO_MEMORY outranks the setting."""
+    env = os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "").strip().lower()
+    if env in ("1", "true", "yes"):
+        return True, "off (CLAUDE_CODE_DISABLE_AUTO_MEMORY is set)"
+    if env in ("0", "false", "no"):
+        return False, "forced on by CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"
+    settings = home() / ".claude" / "settings.json"
+    try:
+        value = json.loads(settings.read_text(encoding="utf-8")).get("autoMemoryEnabled")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        value = None
+    if value is False:
+        return True, f"off (autoMemoryEnabled is false in {settings})"
+    return False, "still on (autoMemoryEnabled is not false); the memory server is meant to replace it"
 
 
 def cmd_doctor(_args) -> int:
@@ -887,11 +1022,31 @@ def cmd_doctor(_args) -> int:
             if s["name"] not in m["mcp"].get(tool, []):
                 stale += 1
                 report(False, f"MCP server {s['name']} not installed for {tool}", "run `agent-setup sync`")
+    block = load_instruction_block()
+    if block:
+        for tool, path in instruction_files().items():
+            ok = block in read_text_exact(path)
+            stale += not ok
+            if not ok:
+                report(False, f"memory instructions missing or out of date for {tool} ({path})",
+                       "run `agent-setup sync`")
     gone = [p for p in m["skills"] + m["agents"] if not (Path(p).exists() or Path(p).is_symlink())]
     for p in gone:
         report(False, f"installed file missing: {p}", "run `agent-setup sync`")
     if not stale and not gone:
         report(True, "everything in the repo is installed and up to date")
+
+    print("Memory")
+    root = memory_store_root()
+    print(f"  info memory store: {root}")
+    if re.match(r"^/mnt/[a-zA-Z]/", str(root)):
+        print("  warn the memory store is on a Windows drive under WSL (slow, file modes are not kept)\n"
+              "         -> set AGENT_MEMORY_DIR to a path in your Linux home")
+    if found["claude"] or (home() / ".claude").exists():
+        off, why = claude_auto_memory_off()
+        print(f"  {'ok  ' if off else 'todo'} Claude auto-memory: {why}"
+              + ("" if off else "\n         -> set \"autoMemoryEnabled\": false in ~/.claude/settings.json "
+                                "(or toggle it with /memory), and unset CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"))
 
     print("Ticket trackers")
     cfg = load_user_config()

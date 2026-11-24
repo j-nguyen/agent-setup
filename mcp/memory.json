@@ -1,0 +1,6 @@
+{
+  "$comment": "Shared local memory (stdlib Python, stdio). Memories are Markdown files under $AGENT_MEMORY_DIR, default ~/.local/share/agent-memory (global/ and projects/<key>/). {repo} is this checkout, filled in at sync, so moving the repo needs a re-sync. Needs python3 on the agent's PATH. No secrets.",
+  "command": "python3",
+  "args": ["{repo}/mcp/servers/memory.py"],
+  "codex": {"default_tools_approval_mode": "approve"}
+}

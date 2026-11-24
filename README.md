@@ -85,7 +85,29 @@ Python standard library.
   no browser MCP required. Browser evals are documented in `evals/README.md`.
 - **MCP servers** (`mcp/`): **CodeGraph** (code-intelligence graph; needs the
   `codegraph` CLI, and answers only in projects indexed with `codegraph init`) and
-  **Context7** (current library docs; works without a key at a lower rate limit).
+  **Context7** (current library docs; works without a key at a lower rate limit),
+  and **memory**: a small local server (`mcp/servers/memory.py`, Python standard
+  library only, stdio) that gives every agent one shared, persistent memory.
+  - *Store:* plain Markdown files, one per fact (frontmatter `name`, `description`,
+    `type: user|feedback|project|reference`), under `$AGENT_MEMORY_DIR`, else
+    `$XDG_DATA_HOME/agent-memory`, else `~/.local/share/agent-memory`. `global/` holds
+    facts for everywhere and `projects/<key>/` one folder per project, where `<key>` is
+    the git root (shared by worktrees) with every non-alphanumeric character as `-`.
+    Same rule on macOS, Linux and WSL2 (on WSL2 keep it in the Linux home, not `/mnt/c`).
+    `agent-setup` never deletes the store.
+  - *Tools:* `search`, `save`, `update`, `forget`. Each takes the agent's
+    `project_path`.
+  - *Guidance:* `sync` also writes a managed block (from `shared/memory-instructions.md`)
+    into `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md` and
+    `~/.config/opencode/AGENTS.md`, telling agents to use this server only. Text
+    outside the markers is never touched, and `uninstall` removes just the block.
+  - *Import:* `python3 mcp/servers/memory.py import-claude [--dry-run]` copies your
+    Claude Code auto-memory (`~/.claude/projects/*/memory/*.md`) into the store. It
+    never moves or deletes the originals, skips names that already exist and can be
+    re-run.
+  - *Claude Code's built-in auto-memory* must be switched off by you
+    (`"autoMemoryEnabled": false` in `~/.claude/settings.json`); `agent-setup doctor`
+    reminds you until it is. See INSTALL.md.
 - **`agent-setup` skill**: lets any agent manage this repo for you ("add a skill
   for X to all my agents", "why isn't my subagent showing up?").
 - `.agents/review.md`: extra review rules and conventions (also read by the finding verifier)
@@ -119,8 +141,10 @@ agents/<name>.md           neutral subagent definition (format below)
 shared/*.md                text included into several subagents (safety rules, repo rules)
 mcp/<name>.json            MCP server definition, always installed (format below)
 mcp/optional/<name>.json   MCP servers installed only for the trackers you choose
+mcp/servers/               code for MCP servers this repo ships (memory.py), run via {repo}
 trackers.json              the tracker choices offered by `agent-setup trackers`
 bin/agent-setup            the installer
+tests/                     unit tests: python3 -m unittest discover -s tests
 evals/                     eval harness for the skills and subagents (see evals/README.md)
 ```
 
@@ -131,6 +155,7 @@ evals/                     eval harness for the skills and subagents (see evals/
 | Skills    | `~/.claude/skills/<name>` → | `~/.agents/skills/<name>` →   | `~/.agents/skills/<name>` →       |
 | Subagents | `~/.claude/agents/<name>.md`| `~/.codex/agents/<name>.toml` | `~/.config/opencode/agents/<name>.md` |
 | MCP       | user scope via `claude mcp add-json` | managed block in `~/.codex/config.toml` | `mcp.servers` in `~/.config/opencode/opencode.json` |
+| Memory guidance | managed block in `~/.claude/CLAUDE.md` | managed block in `~/.codex/AGENTS.md` | managed block in `~/.config/opencode/AGENTS.md` |
 
 - **Skills are symlinks** back into this repo, so edits are live without re-syncing.
   Run `sync` again only after adding, renaming or removing a skill.
@@ -187,7 +212,9 @@ lists and one level of nesting.
 
 ## MCP server format
 
-One file per server. The filename is the server name.
+One file per server. The filename is the server name. In any value, `{repo}` is
+replaced at sync time with the absolute path of this checkout (that is how
+`mcp/memory.json` finds `mcp/servers/memory.py`); moving the repo needs a re-sync.
 
 ```jsonc
 // mcp/github.json: stdio server

@@ -67,6 +67,36 @@ agent-setup sync                        # installs/removes the matching MCP serv
 `codex mcp login <name>`, OpenCode `opencode mcp auth <name>`. The `<name>` is
 `atlassian`, `gitlab` or `linear`. `agent-setup doctor` lists which are still pending.
 
+## 3b. Shared memory
+
+`sync` installs a `memory` MCP server (`mcp/servers/memory.py`) in all three agents,
+plus a short managed block of guidance in `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`
+and `~/.config/opencode/AGENTS.md` (only the text between its markers is touched).
+Memories are Markdown files in `~/.local/share/agent-memory`
+(`$XDG_DATA_HOME/agent-memory`, or `$AGENT_MEMORY_DIR` if set): `global/` plus one
+`projects/<key>/` folder per git repo. The same path is used on macOS, Linux and
+WSL2; on WSL2 keep it in the Linux home, not under `/mnt/c`. `uninstall` never
+deletes it. Needs `python3` on the agents' PATH, and a re-sync if you move this repo.
+
+1. **Import your existing Claude memories** (optional; the originals stay untouched,
+   and it can be re-run):
+
+   ```sh
+   python3 mcp/servers/memory.py import-claude --dry-run   # preview
+   python3 mcp/servers/memory.py import-claude
+   ```
+
+   `type: user` files go to `global/`, the rest to the folder of the same project.
+2. **Turn off Claude Code's built-in auto-memory**, so it doesn't compete with the
+   server. Add `"autoMemoryEnabled": false` to `~/.claude/settings.json` (or toggle it
+   with `/memory`). agent-setup never writes that file. Setting
+   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` also works, but `=0` forces it back on and
+   outranks the setting. Reference:
+   <https://code.claude.com/docs/en/settings-reference> (`autoMemoryEnabled`) and
+   <https://code.claude.com/docs/en/env-vars>. `agent-setup doctor` shows `todo` until it's off.
+3. Restart open agent sessions, then ask each CLI to search memory; it should list the
+   imported memories.
+
 ## 4. Verify
 
 ```sh

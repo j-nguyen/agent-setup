@@ -1,4 +1,7 @@
 {
-  "$comment": "Linear's official MCP server (read-only endpoint, OAuth). Installed when you choose Linear with `agent-setup trackers`.",
-  "url": "https://mcp.linear.app/mcp/readonly"
+  "$comment": "Linear MCP uses read-only access by default. Codex uses the read-write endpoint. Installed when you choose Linear with agent-setup trackers.",
+  "url": "https://mcp.linear.app/mcp/readonly",
+  "codex": {
+    "url": "https://mcp.linear.app/mcp"
+  }
 }

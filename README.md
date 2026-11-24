@@ -69,8 +69,9 @@ Python standard library.
   drift since it was written). If it is, the subagent implements it step by step
   on a cheaper model (Sonnet in Claude Code, `gpt-6.2-sol` in Codex; OpenCode uses
   its configured model), running tests after each step and stopping at anything
-  that would need a design change. The coordinator then re-runs the tests,
-  checks the diff and offers a conformance review. If the plan isn't solid, it
+  that would need a design change. The coordinator checks the diff, then runs
+  review-changes with the plan as the spec if the user asked for it up front.
+  If the plan isn't solid, it
   says what's missing and offers to fix the plan first. Change the models in
   `agents/implementer.md`.
   The implementer also reads best-practice packs for the stacks it touches

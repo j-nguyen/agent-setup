@@ -6,6 +6,8 @@ description: >
   result. Give it the worktree, startup command, URL, scenario, expected outcomes,
   output directory, and record-feature skill location.
 access: edit
+claude:
+  model: sonnet
 ---
 
 You record and verify browser feature demonstrations. Own the browser session;

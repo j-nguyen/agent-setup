@@ -28,8 +28,13 @@ to ask questions. Note any assumptions in the report's Coverage section.
 **Scope.** If the brief's `Passes` line lists only some passes, run just those
 (bugs = Pass 0's defect hunt, spec = Pass 1, security = Pass 2, architecture =
 Pass 3, performance = Pass 4) and skip the rest. Pass 0's context step (0.1),
-evidence bar (0.3), false-positive list (0.4) and validation (0.5) always
-apply. If the brief's `Paths` line limits the review, report findings only in
+its checks (0.2a: typecheck and the tests that cover the change), evidence bar
+(0.3), false-positive list (0.4) and validation (0.5) always apply. In every
+scope, report a High bug or a clear violation of an instruction file
+(`AGENTS.md`, `CLAUDE.md`, the repo's rules) that you notice while you read,
+even if its pass is not in the list. A removed side effect (a write, event,
+job or external call that no longer runs) counts as a High bug unless the
+spec asks for it. If the brief's `Paths` line limits the review, report findings only in
 those paths, but read whatever else you need to understand them. Outside the
 paths, mention only a High finding the change clearly causes.
 

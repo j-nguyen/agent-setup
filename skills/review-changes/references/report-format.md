@@ -16,6 +16,8 @@ restating the spec, and no closing remarks.
 **Spec source:** <brief | PR #123 | docs/spec.md | inferred, no spec found>
 **Verdict:** <Approve | Approve with suggestions | Changes requested> (always)
 **Summary:** <2–3 sentences: what the change does and the overall assessment> (always)
+**Removed:** <every write, event, job, notification or external call the change removes or stops running, in plain words, e.g. "the DynamoDB write of the broker record in `saveApplication`". Omit the line if none.>
+**Worth fixing:** <ids of the findings and suggestions worth fixing before merge>. **Optional:** <the rest, or "none"> (always)
 
 **Fix first:** <only when the verdict is "Changes requested": up to 5 lines, most important first,
 each `F<n>`: <the problem in under 12 words>. Cover every High finding.>
@@ -38,8 +40,9 @@ Keep the Evidence cell to a location plus at most ~10 words.
 ## Suggestions
 - **F7 · architecture · `src/services/order.ts:120`:** <one or two lines: issue, then fix>
 
-At most 5 suggestions, the most useful first. If you have more, end with
-"Also minor: <ids or short phrases>" on one line.
+At most 3 suggestions, the most useful first. A suggestion must change
+behaviour, prevent drift or follow a written repo rule. Leave out the rest;
+don't list them as "also minor".
 
 ## Performance notes
 <only if a performance section applied, in at most 3 lines: what you measured or the EXPLAIN result, or

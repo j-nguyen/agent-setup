@@ -16,7 +16,10 @@ does consider design and readability. It still needs evidence, though, not taste
   change that now needs N edits.
 - **Proportionality.** Don't ask a 20-line bug fix to restructure a module.
   Don't propose abstractions for one use (YAGNI).
-- **Keep it short.** Report the 5–8 most valuable points. Leave out nitpicks a
+- **Keep it short.** Report at most 3 points, and only points that change
+  behaviour, prevent real drift between copies, or break a written repo rule.
+  Don't flag file length on its own, doc or comment wording, or duplication
+  that reads more clearly than the shared version. Leave out nitpicks a
   formatter or linter would handle.
 
 ### 3.2 Design and architecture

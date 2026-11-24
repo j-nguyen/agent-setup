@@ -47,6 +47,12 @@ Also note whether each requirement has a test that would fail if it broke.
 - **Scope creep**: behavior changes nobody asked for, such as changed defaults,
   renamed public APIs, altered response shapes or new side effects. Flag them
   as findings only when they could surprise a user or caller.
+- **New parts the spec may not need**: list each new table, job, queue,
+  service, page or endpoint the change adds. For each, say whether a
+  requirement needs it, or whether an existing one could do the job. Flag it
+  as a `spec` finding (Medium) when no requirement needs it. A requirement row
+  is not Met when the change meets it with parts the spec did not ask for and
+  the user would not expect.
 - **Contract compatibility**: public APIs, CLI flags, config keys, DB schemas
   and event or message formats that existing consumers rely on.
 

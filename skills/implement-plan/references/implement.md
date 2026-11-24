@@ -29,8 +29,7 @@ redesign.
 For each step in scope, in the plan's order:
 1. Make the change the step describes, in the files it names. Keep the diff
    to what the step needs. No drive-by refactors, renames or reformatting.
-   Make edits with your file-editing tool, not shell rewrites (`sed -i`,
-   heredocs, scripts that rewrite files); use the shell to run things.
+   Make every edit with your file-editing tool (see Principles).
 2. Write or update the tests the step and the test plan call for. Don't
    change an existing test's expected values to make it pass unless the plan
    calls for that behavior change; if you must, record it as a deviation.
@@ -41,7 +40,9 @@ For each step in scope, in the plan's order:
 
 Don't start the next step while the current one is failing, unless the plan
 says the steps are independent. After the last step, run the full test suite
-and the linter/type checker (if the project has one) once.
+and the linter/type checker (if the project has one) once. If the brief says
+this is not the last batch, run the linter, the type checker and the tests for
+the files you touched, but not the full suite.
 
 **Keep it fast.** The plan already did the investigating: read the files the
 steps name and their tests, not the rest of the repo. Don't retry the same
@@ -61,6 +62,15 @@ error and move on only if later steps don't depend on it.
   recommend. The coordinator takes it back to the user or the architect.
 - An open question or assumption in the plan that turns out to matter: use the
   plan's recommended default, and record that you did.
+- **Never drop, skip or reorder an existing side effect** (a write, an event,
+  a job, an external call, a notification) to make a build, lint, typecheck
+  or test pass. That is a design change: stop and report a blocker. If the
+  brief says behaviour must stay unchanged, each step that moves a side effect
+  needs a test that proves the effect still runs.
+- **Never hide a failure.** Don't add lint baseline or suppression entries,
+  don't add `.skip` or `.only` to a test, and don't delete or weaken an
+  assertion to make a check pass. If that is the only way through, stop and
+  report a blocker.
 
 ### I4. Safety
 
@@ -97,6 +107,10 @@ Return this, in Markdown, and nothing else:
 
 ## Deviations
 - <plan id (D2 / step 3 / C5)>: <what you did differently and why>   (or "none")
+  List only deviations that change behaviour, an interface or an assertion,
+  or that touch a file the plan doesn't name.
+
+**Mechanical notes:** <n> (count only: a step that needed no edit, an import the plan forgot, a tool not on PATH, and the like)
 
 ## Blockers
 - Step <n>: <conflict, with `file:line` evidence>. *Recommend:* <fix the plan how / ask the user what>   (or omit)

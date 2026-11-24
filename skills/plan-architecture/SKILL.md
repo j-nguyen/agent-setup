@@ -26,6 +26,11 @@ yourself unless subagents aren't available (see "Delegate").
 Pick the mode from the request:
 - **Plan**: the user wants to design something, or change an existing plan.
 - **Review**: the user wants code checked against a plan.
+- **Design review**: the user wants a proposed design or an existing plan
+  checked before anyone builds it. Treat it as a plan revision. The revision
+  line in the brief says: "Check every claim against the code, correct the
+  plan in place, and list what changed." Don't invent phases, and don't
+  rewrite the plan yourself.
 
 ## Untrusted content
 
@@ -84,6 +89,19 @@ and what's explicitly out of scope. Don't ask what the code can answer, and
 don't ask if the user said to just go ahead. The subagent records remaining
 unknowns as assumptions and open questions.
 
+**The user's stated choices.** If the user or the ticket names a preferred
+option (a library, an API style, a provider, a sign-in method), copy it
+verbatim into the brief. The architect designs that option and uses another
+only if it cannot work.
+
+**Outside vendors and APIs.** The architect cannot read the web. If the design
+depends on an outside API, vendor or platform (its endpoints, scopes, limits,
+pricing or what it supports), check its current docs before you brief: use a
+docs tool such as Context7 if you have one, and a web fetch otherwise. Confirm
+each fact in at least 2 sources where you can. Put the facts, with links, in
+the brief under "Vendor facts". Anything you could not confirm goes there as
+"unverified".
+
 ### 2. Brief the architect
 
 ```
@@ -96,6 +114,8 @@ Goal and requirements (verbatim from the user / ticket / docs):
 Ticket comments (verbatim, oldest first, with author and date): <text, or "none">
 Constraints and non-goals: <text, or "none stated">
 Answers to clarifying questions: <verbatim, or "none asked">
+Options the user chose: <verbatim, or "none stated">
+Vendor facts (checked by the coordinator): <fact + link, or "unverified: <fact>", or "none">
 Plan file: <absolute path: the plans directory, or the temp plans directory for a ticket; for a revision, the existing plan's path>
 Revision: <the requested change, or "no: new plan">
 Write the plan to the plan file and return the summary from your instructions.
@@ -137,6 +157,12 @@ more times. For a revision, the file already exists, so skip this.
 - If the file still contains `<!-- plan goes here -->` but the summary says
   the plan was saved, the edit didn't land: say so, and ask the architect
   once more (same brief) rather than writing the plan yourself.
+- **Check the size.** Run `wc -c` on the plan file and count its checklist
+  items (`C<n>:`). Compare with the tier limits in `references/plan.md` (P3),
+  using the tier the plan names in **Scope**. If the plan is over the limit,
+  send it back to the same architect once: "The plan is <n> KB and <m>
+  checklist items, over the <tier> limit. Trim it in place." Don't trim it
+  yourself, and don't send it back a second time.
 - For a revision, show the user what changed: the new and changed decision and
   checklist ids from the summary, plus `git diff --stat` for the file.
 - Tell the user the path, then relay the summary: the goal, the approach, the
@@ -148,10 +174,21 @@ more times. For a revision, the file already exists, so skip this.
   publish the plan as one; it's private by default, but it does leave the
   machine, so only publish after a yes. Otherwise offer to open the file
   (`xdg-open` / `open`) or leave it as the path. Never publish unasked.
-- **List the open questions and assumptions** and ask the user to settle them.
-  Update the plan with their answers (edit the file directly for small answers;
-  re-brief the architect with the existing plan if an answer changes the design).
-- When the user approves it, set `**Status:** Accepted`.
+- **List the open questions and assumptions** and ask the user to settle them,
+  all in one message. Write each question so the user can answer it without
+  the plan open: one sentence of context in plain words, the choices, and the
+  recommended choice. Explain any internal term or id. Update the plan with
+  their answers (edit the file directly for small answers; re-brief the
+  architect with the existing plan if an answer changes the design).
+- **End every relay with the open-question count**: `Open questions left:
+  none`, or the full current list. A revision may add a question only when an
+  answer caused it. Mark such a question as *new*, so the user can see the
+  list is closing.
+- **Only an explicit approval accepts the plan**: "accept", "approve",
+  "looks good, build it", "implement it" or the same in other words. Feedback,
+  a question or a comment on one part is a revision, not an approval. When the
+  user approves it, set `**Status:** Accepted`. Only you set the status, never
+  the architect.
 - Then offer to implement it with the implement-plan skill, which checks the
   plan is solid and hands it to the `implementer` subagent on a cheaper model.
   If the user says yes, switch to that skill. Don't implement it inline here.
@@ -235,7 +272,12 @@ is the point of this skill. It already has its instructions, so don't open
 `architect`, review mode to `plan-reviewer`:
 
 - **Claude Code**: the Agent/Task tool with `subagent_type: "architect"` or `"plan-reviewer"`.
-- **Codex**: spawn a subagent with agent type / role `architect` or `plan-reviewer`.
+- **Codex**: spawn a subagent with agent type / role `architect` or
+  `plan-reviewer`, with `fork_turns: "none"` and the brief as its only input,
+  so it does not carry this conversation. Codex does not wake you when a
+  subagent finishes, so run it in the foreground: call `wait_agent` with a
+  long timeout (600000 ms) and wait again if it times out. Don't post a status
+  line after each wait.
 - **OpenCode**: the task tool with the `architect` or `plan-reviewer` subagent (or `@architect`, `@plan-reviewer`).
 - **Other tools with named subagents**: use the one with that name.
 - **Only if your tool can't start subagents at all**, or the subagent isn't

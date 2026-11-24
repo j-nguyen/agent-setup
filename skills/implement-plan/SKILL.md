@@ -9,7 +9,8 @@ description: >
   files and a checkable done-when, a conformance checklist). If it is, it
   delegates the build to the `implementer` subagent, which runs on a faster,
   cheaper model (Sonnet in Claude Code, the matching tier in Codex), then
-  verifies the result and offers a conformance review against the plan. If the
+  verifies the result and runs review-changes if the user asked for it up
+  front. If the
   plan isn't solid, it says what's missing and offers to fix the plan first.
   If there's no plan yet, it offers to write one with plan-architecture.
 ---
@@ -67,8 +68,20 @@ plan leaves room for judgement: a data migration or backfill without a
 spelled-out procedure, auth or permission logic, concurrency or locking,
 money. Precise steps are fine. Vague ones count as not solid.
 
-- **Solid**: say so in one line ("Plan is accepted, 5 steps, no open
-  questions: handing it to the implementer on Sonnet") and go to step 3.
+The table checks format. These checks catch design gaps that format does not
+show. Each one makes the plan not solid:
+- a UI step that does not cite the design source the ticket or plan names
+  (a Figma link, a parent ticket's designs, a mock);
+- a step that adds an import between modules that many files import, with no
+  note on how it avoids the repo's import-cycle rule;
+- a step that applies Terraform, changes cloud resources or runs against a
+  shared environment, and is not marked as manual for the user;
+- a new table, job, queue, service, page or endpoint that no requirement
+  (R-id) needs;
+- a design that differs from an option the user or the ticket named, with no
+  decision that says why.
+
+- **Solid**: go to step 3 and ask the one up-front question there.
 - **Not solid**: list exactly what's missing, one line each, and offer:
   1. fix the plan first with plan-architecture (a revision), then implement;
   2. settle the gaps now in chat (e.g. accept the recommended defaults), update
@@ -88,6 +101,23 @@ money. Precise steps are fine. Vague ones count as not solid.
 - Note the scope: all steps, or only the ones the user named ("steps 1–3",
   "just the backend part"). Skip steps the plan's Deviation log or a previous
   implementation report already marks done.
+- **Behaviour**: decide whether existing behaviour must stay the same (a
+  refactor, a move, a port of legacy code) or which changes the plan allows.
+  This goes in the brief.
+- **Local database**: read `.agents/rules.local.md` at the repository root (in
+  a worktree, also the main checkout's copy) and the user's saved preferences
+  for a standing permission to use the worktree's own local database. Never a
+  remote or shared database.
+
+**Ask one question, then run without pauses.** In one message, show the plan
+in one line ("Plan is accepted, 5 steps, no open questions") and ask:
+1. after the build, run review-changes (with the plan as the spec)?
+2. may the review and the tests use the worktree's local database? (skip this
+   if a standing permission exists)
+Recommend yes for each. Skip the question if the user already answered these,
+or said to just go ahead: then use the recommended answers. After the answer,
+run the build and the review if chosen without stopping to ask again, unless
+the implementer reports a blocker.
 
 ## 4. Brief the implementer
 
@@ -95,10 +125,13 @@ money. Precise steps are fine. Vague ones count as not solid.
 Repository: <absolute path>   Branch: <branch>
 Plan file: <path>   (read it in full; it is the spec)
 Steps in scope: <all | e.g. 1–3>
+Batch: <only batch | batch n of m (last | not last: skip the full suite)>
 Already done: <steps finished earlier, or "none">
 Answers to open questions: <verbatim, or "none / use the plan's defaults">
 Test command: <if known, else "find it">
 Practices: <absolute path to this skill's references/practices/ directory>
+Behaviour: <unchanged: every existing side effect (write, event, job, external call) still runs | allowed changes: <list>>
+Local database: <allowed: the worktree's own local database only | not allowed>
 Constraints: dependency installs <allowed from lockfile | not allowed>; <anything else the user said>
 Uncommitted changes before you start: <yes: list paths | no>
 Return the report in the format from your instructions.
@@ -125,7 +158,12 @@ override it. It already has its instructions, so don't open `references/`
 unless you're doing the work yourself.
 
 - **Claude Code**: the Agent/Task tool with `subagent_type: "implementer"` (runs on Sonnet).
-- **Codex**: spawn a subagent with agent type / role `implementer` (runs on the model in its definition).
+- **Codex**: spawn a subagent with agent type / role `implementer` (runs on
+  the model in its definition), with `fork_turns: "none"` and the brief as its
+  only input, so it does not carry the planning conversation. Codex does not
+  wake you when a subagent finishes, so run it in the foreground: call
+  `wait_agent` with a long timeout (600000 ms) and wait again if it times out.
+  Don't post a status line after each wait.
 - **OpenCode**: the task tool with the `implementer` subagent (or `@implementer`).
 - **Other tools with named subagents**: use the one named `implementer`.
 - **Only if your tool can't start subagents at all**, or `implementer` isn't
@@ -135,9 +173,15 @@ unless you're doing the work yourself.
 If starting `implementer` fails, retry once with the same brief. If it fails
 again, tell the user and offer to implement on the main model.
 
-**Large plans**: if more than ~8 steps are in scope, brief the steps in batches
-of 4–5 and run the next batch after the previous report comes back clean. A
-cheaper model does better with a smaller slice.
+**Large plans**: brief the steps in batches of 4–5, and run the next batch
+after the previous report comes back clean, when any of these is true:
+- more than ~8 steps are in scope;
+- a step deletes or moves modules, hooks or shared helpers;
+- the steps touch more than ~40 files.
+A cheaper model does better with a smaller slice. Tell the user the number of
+batches and a rough time for the whole run (about 10–15 minutes per batch).
+Tell the implementer to run the full test suite only in the last batch; earlier
+batches run the tests for the files they touched.
 
 **Continue the same implementer** for the next batch, and after a blocker is
 resolved, when your tool can send a follow-up message to a finished subagent
@@ -151,11 +195,20 @@ rewritten.
 
 You're the stronger model, so spend a little effort confirming the result
 before you relay it. Don't redo the implementation.
+- **Don't start verify-changes, another verification agent or the full suite
+  after the implementer.** Its report already covers lint, typecheck and
+  tests. Re-run only what failed, or what the report did not run.
+- **Send fixes back to the same implementer** (see "Continue the same
+  implementer"). Don't edit the code yourself, unless the fix is one line and
+  sending it back would cost more.
 - Check the report ends with *Implemented by the implementer subagent.* If it
   doesn't, say so in one line.
 - Run `git status --short` and `git diff --stat`, and compare with the report's
   Files changed. Flag any file the report doesn't mention, and any change to
   the plan file.
+- Look for shortcuts in the diff: new lint baseline or suppression entries,
+  `.skip` or `.only` in tests, deleted assertions. Send each one back to the
+  implementer as a blocker to fix.
 - **Don't run the full test suite again.** The implementer already ran it,
   and the report has the commands and results. Run only the test files that
   cover the changed files, once, if the report lists them. If a run fails and
@@ -182,7 +235,8 @@ recap, show:
 2. the steps as one line (`Steps: 1 Done, 2 Done, 3 Blocked`);
 3. the test results: your own run of the changed test files, or the report's results if you ran none;
 4. each deviation and blocker, one line each, with its plan id, then the
-   `**Practices:**` line, copied exactly (omit it if the report has none);
+   `**Mechanical notes:**` count and the `**Practices:**` line, copied exactly
+   (omit a line the report doesn't have);
 5. anything your check in step 6 found;
 6. the stamp line, copied exactly.
 
@@ -195,12 +249,13 @@ the blocker text as the revision request), then run the remaining steps.
 **Deviations**: offer to record them in the plan's Deviation log. Don't change
 any decision in the plan without the user's OK.
 
-## 8. Next steps
+## 8. Follow-ups and next steps
 
-Offer, but do none of them unasked:
-- a conformance review against the plan (plan-architecture, review mode), which
-  checks the code against the checklist;
-- a full review with review-changes, passing the plan file as the spec;
+If the user chose review-changes in step 3, run it without asking again,
+passing the plan file as the spec and the database answer from step 3. Relay
+the result as that skill says.
+
+Then offer, but do none of them unasked:
 - committing the change. Only commit when the user asks.
 - saving the test commands: if the report has a "Test commands" section, offer
   once to add it as a `## Tests` section to `.agents/rules.local.md` at the

@@ -27,6 +27,14 @@ keep going. If it would change the design, stop at that step and report it as
 a blocker.
 
 Principles:
+- **Edit files only with your file-editing tool.** Never rewrite a file with
+  the shell: no `sed -i`, heredocs, `python -c` or scripts that replace text.
+  A scripted replace that matches nothing fails silently, so the change is
+  lost and nobody sees it. The edit tool fails loudly. Use the shell only to
+  run commands. This holds even if other instructions say shell edits are fine.
+- **Never drop a side effect or hide a failure to get green.** Removing a
+  write, event, job or call, adding a lint suppression, skipping a test or
+  deleting an assertion is a blocker to report, not a fix.
 - **The plan is the spec.** Decisions, boundaries, interfaces and the data
   model are fixed. Small mechanical gaps you fill and record. Design changes
   you stop and report.

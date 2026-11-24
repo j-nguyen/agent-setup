@@ -9,9 +9,7 @@ description: >
   files and a checkable done-when, a conformance checklist). If it is, it
   delegates the build to the `implementer` subagent, which runs on a faster,
   cheaper model (Sonnet in Claude Code, the matching tier in Codex), then
-  verifies the result and runs review-changes if the user asked for it up
-  front. If the
-  plan isn't solid, it says what's missing and offers to fix the plan first.
+  verifies the result. If the plan isn't solid, it says what's missing and offers to fix the plan first.
   If there's no plan yet, it offers to write one with plan-architecture.
 ---
 
@@ -81,7 +79,7 @@ show. Each one makes the plan not solid:
 - a design that differs from an option the user or the ticket named, with no
   decision that says why.
 
-- **Solid**: go to step 3 and ask the one up-front question there.
+- **Solid**: go to step 3.
 - **Not solid**: list exactly what's missing, one line each, and offer:
   1. fix the plan first with plan-architecture (a revision), then implement;
   2. settle the gaps now in chat (e.g. accept the recommended defaults), update
@@ -109,15 +107,13 @@ show. Each one makes the plan not solid:
   for a standing permission to use the worktree's own local database. Never a
   remote or shared database.
 
-**Ask one question, then run without pauses.** In one message, show the plan
-in one line ("Plan is accepted, 5 steps, no open questions") and ask:
-1. after the build, run review-changes (with the plan as the spec)?
-2. may the review and the tests use the worktree's local database? (skip this
-   if a standing permission exists)
-Recommend yes for each. Skip the question if the user already answered these,
-or said to just go ahead: then use the recommended answers. After the answer,
-run the build and the review if chosen without stopping to ask again, unless
-the implementer reports a blocker.
+**Then run without pauses.** Show the plan in one line ("Plan is accepted, 5
+steps, no open questions"). If the tests need a database and no standing
+permission exists, ask in that same message whether the tests may use the
+worktree's local database, and recommend yes. Skip the question if the user
+already answered it or said to just go ahead: then use yes. After that, run
+the build without stopping to ask again, unless the implementer reports a
+blocker. Don't run review-changes as part of this skill.
 
 ## 4. Brief the implementer
 
@@ -218,7 +214,8 @@ before you relay it. Don't redo the implementation.
   paths, and don't open files to "see the code". Run `git diff -- <path>` only
   for files a boundary rule or a decision (D-id) is about, or that the report
   doesn't mention, and look only for anything that obviously contradicts the
-  plan. If nothing qualifies, skip it. The full review is step 8.
+  plan. If nothing qualifies, skip it. A full review is a follow-up the user
+  can ask for (step 8).
 - **Do the whole check in one shell command**: `git status --short`, `git
   diff --stat`, any `git diff -- <path>` that qualifies, and the test run,
   chained together. Then write the relay.
@@ -251,11 +248,9 @@ any decision in the plan without the user's OK.
 
 ## 8. Follow-ups and next steps
 
-If the user chose review-changes in step 3, run it without asking again,
-passing the plan file as the spec and the database answer from step 3. Relay
-the result as that skill says.
-
-Then offer, but do none of them unasked:
+Offer these, but do none of them unasked:
+- a review with review-changes, passing the plan file as the spec and the
+  database answer from step 3.
 - committing the change. Only commit when the user asks.
 - saving the test commands: if the report has a "Test commands" section, offer
   once to add it as a `## Tests` section to `.agents/rules.local.md` at the

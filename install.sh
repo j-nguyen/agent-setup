@@ -6,6 +6,8 @@
 #   ./install.sh --no-path  don't add `agent-setup` to ~/.local/bin
 #   ./install.sh --trackers=github,jira   choose ticket trackers without the prompt
 #                                         (github, jira, gitlab, linear, or none)
+#   ./install.sh --only=review-changes,memory   install only these items (and what they need)
+#   ./install.sh --skip=record-feature          install everything except these items
 set -eu
 
 REPO=$(cd "$(dirname "$0")" && pwd)
@@ -13,16 +15,25 @@ BIN="$REPO/bin/agent-setup"
 YES=0
 LINK=1
 TRACKERS=""
+ONLY=""
+SKIP=""
 for arg in "$@"; do
   case "$arg" in
     -y|--yes) YES=1 ;;
     --no-path) LINK=0 ;;
     --trackers=*) TRACKERS="${arg#--trackers=}" ;;
     --trackers) echo "use --trackers=github,jira (with =)" >&2; exit 2 ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    --only=*) ONLY="${arg#--only=}" ;;
+    --only) echo "use --only=review-changes,memory (with =)" >&2; exit 2 ;;
+    --skip=*) SKIP="${arg#--skip=}" ;;
+    --skip) echo "use --skip=record-feature (with =)" >&2; exit 2 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
+if [ -n "$ONLY" ] && [ -n "$SKIP" ]; then
+  echo "use --only or --skip, not both" >&2; exit 2
+fi
 
 say() { printf '\n== %s\n' "$1"; }
 
@@ -48,6 +59,17 @@ else
   echo "  skipped (non-interactive). Pasted tickets work; choose later with: agent-setup trackers --ask"
 fi
 
+say "Choose what to install"
+if [ -n "$ONLY" ]; then
+  "$BIN" select --only "$ONLY"
+elif [ -n "$SKIP" ]; then
+  "$BIN" select --skip "$SKIP"
+elif [ "$YES" -ne 1 ] && [ -t 0 ]; then
+  "$BIN" select --ask
+else
+  echo "  keeping your saved choice, or everything if there is none. Change it later with: agent-setup select --ask"
+fi
+
 say "Preview (nothing is changed yet)"
 set +e
 "$BIN" sync --dry-run
@@ -70,7 +92,11 @@ if [ "$YES" -ne 1 ]; then
 fi
 
 say "Installing"
-"$BIN" sync
+if [ "$YES" -eq 1 ]; then
+  "$BIN" sync --yes
+else
+  "$BIN" sync
+fi
 
 if [ "$LINK" -eq 1 ]; then
   mkdir -p "$HOME/.local/bin"

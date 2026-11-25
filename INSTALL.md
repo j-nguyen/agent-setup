@@ -27,11 +27,13 @@ What `install.sh` does, in order:
 2. Validates every skill, subagent and MCP definition in the repo.
 3. Asks which ticket trackers you use (see step 3). Skip the question with
    `--trackers=github,jira` or `--trackers=none`.
-4. Shows a **preview** of every file and config entry it will create. Nothing is changed yet.
-5. Asks `Install the above? [y/N]`. Use `./install.sh --yes` to skip both questions.
-6. Installs (`agent-setup sync`) and links `agent-setup` into `~/.local/bin`
+4. Asks which skills, subagents and MCP servers to install (see [Choose what to install](#3a-choose-what-to-install)).
+   Skip the question with `--only=a,b` or `--skip=a,b`.
+5. Shows a **preview** of every file and config entry it will create. Nothing is changed yet.
+6. Asks `Install the above? [y/N]`. Use `./install.sh --yes` to skip both questions.
+7. Installs (`agent-setup sync`) and links `agent-setup` into `~/.local/bin`
    (skip that with `--no-path`).
-7. Runs `agent-setup doctor` to verify.
+8. Runs `agent-setup doctor` to verify.
 
 If the preview shows **CONFLICT** lines, it stops without changing anything. See [Conflicts](#conflicts).
 
@@ -66,6 +68,43 @@ agent-setup sync                        # installs/removes the matching MCP serv
 **OAuth sign-in** (once per tool, opens a browser): Claude Code `/mcp`, Codex
 `codex mcp login <name>`, OpenCode `opencode mcp auth <name>`. The `<name>` is
 `atlassian`, `gitlab` or `linear`. `agent-setup doctor` lists which are still pending.
+
+## 3a. Choose what to install
+
+By default `sync` installs every skill, subagent and MCP server in the repo.
+To install only some, save a choice:
+
+```sh
+agent-setup select                      # show the current choice
+agent-setup select --ask                # checklist: toggle numbers or names, 'all', 'none', Enter saves
+agent-setup select --only review-changes,memory   # just these
+agent-setup select --skip record-feature          # everything except these
+agent-setup select --add debug-ticket             # change the saved choice
+agent-setup select --remove memory
+agent-setup select --all                          # back to everything
+agent-setup sync                        # installs the chosen items, removes what it installed for the rest
+```
+
+Names are bare (`architect`) or prefixed (`agents/architect`). Use the prefix when
+a bare name matches two kinds. `install.sh` takes `--only=LIST` and `--skip=LIST`
+and runs the same command.
+
+- **Needs.** A skill also installs the subagents it starts, even if you did not pick them.
+  `sync`, `status` and `doctor` print a line like
+  `also installs agents/architect (needed by skills/plan-architecture)`.
+  The links are in `requires.json`. Your saved choice is not changed.
+- **Instruction blocks.** The `memory` and `devservers` blocks in each tool's instruction
+  file follow their MCP servers. Deselect a server and `sync` removes its block.
+- **Trackers.** Tracker servers (`jira`, `gitlab`, `linear`) are not part of this choice.
+  `agent-setup trackers` controls them.
+- **New items.** When a `git pull` adds an item that your choice does not mention, `sync`
+  lists it. In a terminal it asks `Add them? [y/N or numbers/names]`. Enter skips them.
+  With `--yes`, `sync --dry-run` or no terminal, it skips them, records nothing and
+  prints the `select --add` command. The next interactive `sync` asks again.
+- **Existing installs.** Without a saved choice nothing changes: `sync` installs everything
+  and never asks.
+
+The choice is stored on this machine only, under `selection` in `~/.config/agent-setup/config.json`.
 
 ## 3b. Shared memory
 
@@ -145,6 +184,9 @@ Then **restart any open agent sessions** and try it in a real repo:
 | See what's installed | `agent-setup status` |
 | Check health | `agent-setup doctor` |
 | Preview a change | `agent-setup sync --dry-run` |
+| Choose what gets installed | `agent-setup select --ask`, then `agent-setup sync` |
+| Add or remove one item | `agent-setup select --add <name>` or `--remove <name>`, then `agent-setup sync` |
+| Sync without any question | `agent-setup sync --yes` (skips new items) |
 | Install for some tools only | `agent-setup sync --targets claude,codex` |
 | Remove everything it installed | `agent-setup uninstall` |
 

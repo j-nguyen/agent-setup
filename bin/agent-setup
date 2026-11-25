@@ -453,6 +453,282 @@ def cmd_trackers(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Selection: which skills, subagents and MCP servers to install. The choice lives
+# in the user's config under "selection". No "selection" key means everything.
+# --------------------------------------------------------------------------- #
+REQUIRES_FILE = REPO / "requires.json"
+KINDS = ("skills", "agents", "mcp")
+
+
+def load_requires() -> dict[str, list[str]]:
+    if not REQUIRES_FILE.exists():
+        return {}
+    data = json.loads(REQUIRES_FILE.read_text(encoding="utf-8"))
+    data.pop("$comment", None)
+    return data
+
+
+def catalog(skills: list, agents: list[dict], servers: list[dict]) -> dict[str, list[str]]:
+    """Every item that can be selected. Tracker servers in mcp/optional belong to `trackers`."""
+    return {"skills": [n for n, _ in skills],
+            "agents": [a["name"] for a in agents],
+            "mcp": [s["name"] for s in servers if s["src"].parent == MCP_SRC]}
+
+
+def validate_requires(requires: dict, cat: dict[str, list[str]]) -> None:
+    def check(ref) -> None:
+        kind, _, name = str(ref).partition("/")
+        if kind not in cat or name not in cat[kind]:
+            raise ValueError(f"{REQUIRES_FILE.name}: unknown item {ref!r}; use kind/name, "
+                             f"for example skills/review-changes")
+
+    for key, deps in requires.items():
+        check(key)
+        if not isinstance(deps, list):
+            raise ValueError(f"{REQUIRES_FILE.name}: {key!r} must map to a list")
+        for dep in deps:
+            check(dep)
+
+
+def saved_selection(cfg: dict) -> dict | None:
+    sel = cfg.get("selection")
+    return sel if isinstance(sel, dict) else None
+
+
+def effective_selection(cfg: dict, cat: dict[str, list[str]],
+                        requires: dict | None = None) -> tuple[dict[str, set[str]], list[str]]:
+    """The selected items plus everything they need, and a note for each item added that way."""
+    sel = saved_selection(cfg)
+    if sel is None:
+        return {k: set(v) for k, v in cat.items()}, []
+    requires = load_requires() if requires is None else requires
+    eff = {k: {n for n in cat[k] if (sel.get(k) or {}).get(n) is True} for k in KINDS}
+    notes: list[str] = []
+    queue = [f"{k}/{n}" for k in KINDS for n in sorted(eff[k])]
+    while queue:
+        item = queue.pop(0)
+        for dep in requires.get(item, []):
+            kind, _, name = dep.partition("/")
+            if kind in eff and name in cat[kind] and name not in eff[kind]:
+                eff[kind].add(name)
+                notes.append(f"also installs {dep} (needed by {item})")
+                queue.append(dep)
+    return eff, notes
+
+
+def new_items(cfg: dict, cat: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Items in the repo that the saved choice does not mention. Empty without a saved choice."""
+    sel = saved_selection(cfg)
+    if sel is None:
+        return {k: [] for k in KINDS}
+    return {k: [n for n in cat[k] if n not in (sel.get(k) or {})] for k in KINDS}
+
+
+def filter_sources(skills: list, agents: list[dict], servers: list[dict],
+                   eff: dict[str, set[str]]) -> tuple[list, list[dict], list[dict]]:
+    return ([s for s in skills if s[0] in eff["skills"]],
+            [a for a in agents if a["name"] in eff["agents"]],
+            [s for s in servers if s["src"].parent != MCP_SRC or s["name"] in eff["mcp"]])
+
+
+def apply_selection(skills: list, agents: list[dict], servers: list[dict], cfg: dict,
+                    requires: dict | None = None) -> tuple[list, list[dict], list[dict], dict, list[str]]:
+    eff, notes = effective_selection(cfg, catalog(skills, agents, servers), requires)
+    return (*filter_sources(skills, agents, servers, eff), eff, notes)
+
+
+def resolve_items(tokens: list[str], cat: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """Turn bare (`architect`) or prefixed (`agents/architect`) names into (kind, name) pairs."""
+    out: list[tuple[str, str]] = []
+    for token in tokens:
+        kind, sep, name = token.partition("/")
+        if sep:
+            if kind not in cat or name not in cat[kind]:
+                raise ValueError(f"unknown item: {token}")
+            out.append((kind, name))
+            continue
+        kinds = [k for k in KINDS if token in cat[k]]
+        if not kinds:
+            raise ValueError(f"unknown item: {token}")
+        if len(kinds) > 1:
+            raise ValueError(f"ambiguous name {token!r}; use " + " or ".join(f"{k}/{token}" for k in kinds))
+        out.append((kinds[0], token))
+    return out
+
+
+def parse_list(raw: str, cat: dict[str, list[str]]) -> list[tuple[str, str]]:
+    return resolve_items([x for x in re.split(r"[,\s]+", raw.strip()) if x], cat)
+
+
+def is_interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def resolve_new_items(cfg: dict, new: dict[str, list[str]], cat: dict[str, list[str]],
+                      dry: bool, yes: bool) -> dict:
+    """List items the saved choice does not mention. Ask about them only on a TTY, and only when not dry."""
+    items = [f"{k}/{n}" for k in KINDS for n in new[k]]
+    if not items:
+        return cfg
+    print(f"New items not in your saved choice ({len(items)}):")
+    if dry:
+        for item in items:
+            print(f"  new (not selected)  {item}")
+        print("  Run `agent-setup select --ask` or `agent-setup sync` in a terminal to choose.")
+        return cfg
+    if yes or not is_interactive():
+        for item in items:
+            print(f"  skipped   {item}  (new, not selected)")
+        print(f"  Add with `agent-setup select --add {','.join(items)}`.")
+        return cfg
+    for i, item in enumerate(items, 1):
+        print(f"  {i}) {item}")
+    try:
+        raw = input("Add them? [y/N or numbers/names]: ").strip()
+    except EOFError:
+        print("  skipped (no input); nothing recorded")
+        return cfg
+    chosen: set[str] = set()
+    if raw.lower() in ("y", "yes"):
+        chosen = set(items)
+    elif raw and raw.lower() not in ("n", "no"):
+        tokens = [x for x in re.split(r"[,\s]+", raw) if x]
+        for token in tokens:
+            if token.isdigit() and 0 < int(token) <= len(items):
+                chosen.add(items[int(token) - 1])
+            else:
+                chosen.update(f"{k}/{n}" for k, n in resolve_items([token], cat) if f"{k}/{n}" in items)
+    sel = cfg.setdefault("selection", {})
+    for item in items:
+        kind, _, name = item.partition("/")
+        sel.setdefault(kind, {})[name] = item in chosen
+    save_user_config(cfg)
+    print(f"  recorded in {user_config_file()}")
+    return cfg
+
+
+def short_description(text: str, limit: int = 64) -> str:
+    text = " ".join(str(text).split())
+    first = text.split(". ")[0].rstrip(".")
+    return first if len(first) <= limit else first[:limit - 3].rstrip() + "..."
+
+
+def item_descriptions(skills: list, agents: list[dict], servers: list[dict]) -> dict[str, str]:
+    out = {f"skills/{n}": short_description(read_frontmatter(p / "SKILL.md")[0].get("description", ""))
+           for n, p in skills}
+    out.update({f"agents/{a['name']}": short_description(a["description"]) for a in agents})
+    for s in servers:
+        spec = s["spec"]
+        out[f"mcp/{s['name']}"] = short_description(spec.get("description") or spec.get("url")
+                                                    or f"{spec.get('command', '')} server")
+    return out
+
+
+def selection_maps(cat: dict[str, list[str]], chosen: set[str]) -> dict[str, dict[str, bool]]:
+    return {k: {n: f"{k}/{n}" in chosen for n in cat[k]} for k in KINDS}
+
+
+def ask_selection(cfg: dict, cat: dict[str, list[str]], desc: dict[str, str],
+                  requires: dict) -> set[str] | None:
+    """The checklist. Returns the chosen `kind/name` set, or None when input ended (keep the saved choice)."""
+    sel = saved_selection(cfg)
+    chosen = {f"{k}/{n}" for k in KINDS for n in cat[k]
+              if sel is None or (sel.get(k) or {}).get(n) is True}
+    items = [f"{k}/{n}" for k in KINDS for n in cat[k]]
+    while True:
+        print("\nChoose what to install. Items marked x are selected.\n")
+        i = 0
+        for kind in KINDS:
+            print(f"{kind}:")
+            for n in cat[kind]:
+                i += 1
+                ref = f"{kind}/{n}"
+                needs = requires.get(ref)
+                print(f"  {i:>2}) [{'x' if ref in chosen else ' '}] {n:<20} {desc.get(ref, '')}"
+                      + (f"  (needs: {', '.join(needs)})" if needs else ""))
+        try:
+            raw = input("\nNumbers or names to toggle, 'all', 'none', or Enter to save: ").strip()
+        except EOFError:
+            return None
+        if not raw:
+            return chosen
+        if raw.lower() == "all":
+            chosen = set(items)
+        elif raw.lower() == "none":
+            chosen = set()
+        else:
+            try:
+                picks = []
+                for token in (x for x in re.split(r"[,\s]+", raw) if x):
+                    if token.isdigit() and 0 < int(token) <= len(items):
+                        picks.append(items[int(token) - 1])
+                    else:
+                        picks += [f"{k}/{n}" for k, n in resolve_items([token], cat)]
+            except ValueError as e:
+                print(f"  {e}", file=sys.stderr)
+                continue
+            for ref in picks:
+                chosen ^= {ref}
+
+
+def cmd_select(args) -> int:
+    skills, agents, servers = load_skills(), load_agents(), load_mcp()
+    cat = catalog(skills, agents, servers)
+    requires = load_requires()
+    validate_requires(requires, cat)
+    cfg = load_user_config()
+    everything = {f"{k}/{n}" for k in KINDS for n in cat[k]}
+    maps = None
+    if args.ask:
+        chosen = ask_selection(cfg, cat, item_descriptions(skills, agents, servers), requires)
+        if chosen is None:
+            print("No input. Your saved choice is unchanged.")
+            return 0
+        maps = selection_maps(cat, chosen)
+    elif args.all:
+        maps = selection_maps(cat, everything)
+    elif args.only is not None:
+        maps = selection_maps(cat, {f"{k}/{n}" for k, n in parse_list(args.only, cat)})
+    elif args.skip is not None:
+        maps = selection_maps(cat, everything - {f"{k}/{n}" for k, n in parse_list(args.skip, cat)})
+    elif args.add is not None or args.remove is not None:
+        sel = saved_selection(cfg)
+        maps = {k: dict((sel or selection_maps(cat, everything)).get(k) or {}) for k in KINDS}
+        for k, n in parse_list(args.add or "", cat):
+            maps[k][n] = True
+        for k, n in parse_list(args.remove or "", cat):
+            maps[k][n] = False
+    if maps is None:
+        sel = saved_selection(cfg)
+        if sel is None:
+            print("No saved choice: everything is installed.")
+        eff, notes = effective_selection(cfg, cat, requires)
+        for kind in KINDS:
+            for n in cat[kind]:
+                if sel is None:
+                    state = "x"
+                else:
+                    state = "x" if (sel.get(kind) or {}).get(n) is True else (
+                        "+" if n in eff[kind] else ("?" if n not in (sel.get(kind) or {}) else " "))
+                print(f"  [{state}] {kind}/{n}")
+        for note in notes:
+            print(f"  {note}")
+        print("  x selected, + installed because another item needs it, ? new (not chosen yet)")
+        print("Change with `agent-setup select --ask`, `--only LIST`, `--skip LIST`, `--add LIST`, "
+              "`--remove LIST` or `--all`.")
+        return 0
+    cfg["selection"] = maps
+    save_user_config(cfg)
+    picked = {k: sum(v.values()) for k, v in maps.items()}
+    print(f"Saved to {user_config_file()}: "
+          + ", ".join(f"{picked[k]} of {len(maps[k])} {k}" for k in KINDS))
+    for note in effective_selection(cfg, cat, requires)[1]:
+        print(f"  {note}")
+    print("Run `agent-setup sync` to install or remove the matching items.")
+    return 0
+
+
 def mcp_claude(s: dict) -> dict:
     if "command" in s:
         out = {"type": "stdio", "command": s["command"], "args": s.get("args", [])}
@@ -664,8 +940,7 @@ MCP_BACKENDS = {"claude": (ClaudeMcp, mcp_claude), "codex": (CodexMcp, mcp_codex
                 "opencode": (OpencodeMcp, mcp_opencode)}
 
 
-def sync_mcp(tools: list[str], old: dict, new: dict, dry: bool, adopt: bool) -> int:
-    servers = load_mcp()
+def sync_mcp(servers: list[dict], tools: list[str], old: dict, new: dict, dry: bool, adopt: bool) -> int:
     print(f"MCP servers ({len(servers)}):")
     conflicts = 0
     for tool in tools:
@@ -790,8 +1065,10 @@ def read_text_exact(path: Path) -> str:
     return path.read_bytes().decode("utf-8") if path.exists() else ""
 
 
-def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool) -> None:
-    blocks = instruction_blocks()
+def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool,
+                      selected_servers: set[str] | None = None) -> None:
+    """Write the block of each selected server. Blocks of servers that are not selected are removed."""
+    blocks = {n: b for n, b in instruction_blocks().items() if selected_servers is None or n in selected_servers}
     files = instruction_files()
     print(f"Instruction blocks ({len(tools) if blocks else 0}):")
     chosen = {str(files[t]) for t in tools}
@@ -802,6 +1079,12 @@ def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool) -> None
             continue
         original = text = read_text_exact(path)
         exists = path.exists()
+        for name in INSTR_NAMES:
+            if name not in blocks:
+                out = without_block(text, path, name)
+                if out != text:
+                    log("remove", path, f"{name} block")
+                    text = out
         for name, block in blocks.items():
             out = with_block(text, block, path, name)
             if out == text:
@@ -853,11 +1136,19 @@ def cmd_sync(args) -> int:
         print(f"unknown target(s): {', '.join(sorted(unknown))}", file=sys.stderr)
         return 2
     skills, agents = load_skills(), load_agents()
-    load_mcp()  # validate everything before writing anything, so a bad file can't leave a half-done sync
+    servers = load_mcp()  # validate everything before writing anything, so a bad file can't leave a half-done sync
+    cat = catalog(skills, agents, servers)
+    requires = load_requires()
+    validate_requires(requires, cat)
     for t in tmap:  # same for the instruction files: unbalanced markers stop the sync before any write
         path = instruction_files()[t]
         for name in INSTR_NAMES:
             _block_span(read_text_exact(path), path, name)
+    cfg = load_user_config()
+    cfg = resolve_new_items(cfg, new_items(cfg, cat), cat, args.dry_run, args.yes)
+    skills, agents, servers, eff, notes = apply_selection(skills, agents, servers, cfg, requires)
+    for note in notes:
+        print(note)
     old = load_manifest()
     new = empty_manifest()
     new["mcp"] = {t: list(v) for t, v in old["mcp"].items()}  # tools not in this run keep theirs
@@ -920,8 +1211,8 @@ def cmd_sync(args) -> int:
         else:
             remove_managed(Path(p), args.dry_run)
 
-    conflicts += sync_mcp([t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run, args.adopt)
-    sync_instructions([t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run)
+    conflicts += sync_mcp(servers, [t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run, args.adopt)
+    sync_instructions([t for t in MCP_TOOLS if t in tmap], old, new, args.dry_run, eff["mcp"])
 
     save_manifest(new, args.dry_run)
     if args.dry_run:
@@ -948,11 +1239,18 @@ def cmd_uninstall(args) -> int:
 
 def cmd_status(_args) -> int:
     m = load_manifest()
-    skills, agents = load_skills(), load_agents()
+    all_skills, all_agents, all_servers = load_skills(), load_agents(), load_mcp()
+    skills, agents, servers, eff, notes = apply_selection(all_skills, all_agents, all_servers, load_user_config())
     print(f"Source: {REPO}")
     print(f"  skills:    {', '.join(n for n, _ in skills) or '(none)'}")
     print(f"  subagents: {', '.join(a['name'] for a in agents) or '(none)'}")
-    print(f"  mcp:       {', '.join(s['name'] for s in load_mcp()) or '(none)'}")
+    print(f"  mcp:       {', '.join(s['name'] for s in servers) or '(none)'}")
+    cat = catalog(all_skills, all_agents, all_servers)
+    unselected = [f"{k}/{n}" for k in KINDS for n in cat[k] if n not in eff[k]]
+    if unselected:
+        print(f"  not selected: {', '.join(unselected)}")
+    for note in notes:
+        print(f"  {note}")
     print(f"Installed ({state_file()}):")
     for p in m["skills"] + m["agents"]:
         path = Path(p)
@@ -961,6 +1259,8 @@ def cmd_status(_args) -> int:
     for p in m["instructions"]:
         path = Path(p)
         for name in instruction_blocks():
+            if name not in eff["mcp"]:
+                continue
             state = "ok" if path.is_file() and _block_span(read_text_exact(path), path, name) else "MISSING"
             print(f"  {state:<8} {p}  ({name} block)")
     for tool, names in m["mcp"].items():
@@ -1034,6 +1334,13 @@ def cmd_doctor(_args) -> int:
     except ValueError as e:
         report(False, f"invalid source: {e}", "fix the file, then run `agent-setup validate`")
         return 1
+    cat = catalog(skills, agents, servers)
+    skills, agents, servers, eff, notes = apply_selection(skills, agents, servers, load_user_config())
+    for note in notes:
+        print(f"  info {note}")
+    fresh = [f"{k}/{n}" for k, names in new_items(load_user_config(), cat).items() for n in names]
+    if fresh:
+        print(f"  info new items not chosen yet: {', '.join(fresh)}\n         -> agent-setup select --add NAME")
 
     print("Installed")
     m = load_manifest()
@@ -1059,6 +1366,8 @@ def cmd_doctor(_args) -> int:
                 stale += 1
                 report(False, f"MCP server {s['name']} not installed for {tool}", "run `agent-setup sync`")
     for name, block in instruction_blocks().items():
+        if name not in eff["mcp"]:
+            continue
         for tool, path in instruction_files().items():
             ok = block in read_text_exact(path)
             stale += not ok
@@ -1143,6 +1452,7 @@ def cmd_doctor(_args) -> int:
 
 def cmd_validate(_args) -> int:
     skills, agents, servers = load_skills(), load_agents(), load_mcp()
+    validate_requires(load_requires(), catalog(skills, agents, servers))
     # Also check every optional tracker server, chosen or not, with its default settings.
     for tid, t in load_trackers().items():
         if t.get("mcp"):
@@ -1228,6 +1538,8 @@ def main() -> int:
     s.add_argument("--adopt", action="store_true",
                    help="take over MCP servers that already exist under the same name")
     s.add_argument("-t", "--targets", help=f"comma list, default all: {','.join(targets())}")
+    s.add_argument("-y", "--yes", action="store_true",
+                   help="never ask: skip new items that are not in your saved choice")
     s.set_defaults(fn=cmd_sync)
     u = sub.add_parser("uninstall", help="remove everything agent-setup installed")
     u.add_argument("-n", "--dry-run", action="store_true")
@@ -1239,6 +1551,15 @@ def main() -> int:
     tr.add_argument("--set", metavar="LIST", help="e.g. github,jira  (or 'none')")
     tr.add_argument("--gitlab-host", help="self-managed GitLab host, e.g. gitlab.example.com")
     tr.set_defaults(fn=cmd_trackers)
+    se = sub.add_parser("select", help="choose which skills, subagents and MCP servers to install")
+    grp = se.add_mutually_exclusive_group()
+    grp.add_argument("--ask", action="store_true", help="choose from a checklist")
+    grp.add_argument("--only", metavar="LIST", help="select only these, e.g. review-changes,memory")
+    grp.add_argument("--skip", metavar="LIST", help="select everything except these")
+    grp.add_argument("--add", metavar="LIST", help="add these to the saved choice")
+    grp.add_argument("--remove", metavar="LIST", help="remove these from the saved choice")
+    grp.add_argument("--all", action="store_true", help="select everything")
+    se.set_defaults(fn=cmd_select)
     sub.add_parser("doctor", help="check prerequisites, install state and MCP sign-in").set_defaults(fn=cmd_doctor)
     n = sub.add_parser("new", help="scaffold a new skill, subagent or MCP server")
     n.add_argument("kind", choices=["skill", "agent", "mcp"])

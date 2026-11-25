@@ -20,20 +20,30 @@ Follow these steps exactly. Don't improvise the install.
 4. **Ask about trackers.** Ask the user which ticket trackers they use:
    `github`, `jira`, `gitlab`, `linear`, or none (they'll paste tickets). If they
    use self-managed GitLab, also ask for the host. Don't guess.
-5. **Install.** Once the preview is clean and the user has asked for the install,
-   run `./install.sh --yes --trackers=<their answer>` (`--trackers=none` for none).
+5. **Ask what to install.** Ask whether they want everything or a subset of the
+   skills, subagents and MCP servers. List the names with `./bin/agent-setup select`
+   if they ask. For a subset, pass `--only=a,b` (just these) or `--skip=a,b`
+   (everything but these) to `install.sh`. A skill also installs the subagents it
+   needs, and the `memory` and `devservers` instruction blocks follow their MCP servers.
+6. **Install.** Once the preview is clean and the user has asked for the install,
+   run `./install.sh --yes --trackers=<their answer>` (`--trackers=none` for none),
+   plus `--only=...` or `--skip=...` if they chose a subset.
    For a self-managed GitLab host, run
    `./bin/agent-setup trackers --set gitlab --gitlab-host <host>` first. The
    installer re-checks, installs, links `agent-setup` into `~/.local/bin` and
    runs `doctor`. If the user doesn't want the PATH link, add `--no-path`.
-6. **Hand off the manual steps.** OAuth sign-ins open a browser, so you can't do
+7. **Hand off the manual steps.** OAuth sign-ins open a browser, so you can't do
    them. Tell the user which ones `doctor` flagged (`todo`): Claude Code `/mcp`,
    `codex mcp login <name>`, `opencode mcp auth <name>`. Also tell them to restart
    open agent sessions.
-7. **Report.** Say what was installed, any skipped items, and what's left for the user.
+8. **Report.** Say what was installed, any skipped items, and what's left for the user.
 
-To update: `git pull`, then steps 2, 3 and 5 (the tracker choice is kept).
+To update: `git pull`, then steps 2, 3 and 6 (the tracker choice and the item choice are kept).
+`sync --yes` never asks. It skips items that are new in the repo and prints how to add them
+with `./bin/agent-setup select --add <name>`. Tell the user about any skipped new items.
 To change trackers later: `./bin/agent-setup trackers --set <list>`, then `./bin/agent-setup sync`.
+To change the chosen items later: `./bin/agent-setup select --add|--remove <list>` (or `--only`,
+`--skip`, `--all`, `--ask`), then `./bin/agent-setup sync`.
 To remove everything: `./bin/agent-setup uninstall`, and only if the user asks.
 
 ## Changing this repo
@@ -50,6 +60,9 @@ To remove everything: `./bin/agent-setup uninstall`, and only if the user asks.
 - Keep skills and subagents tool-agnostic. Don't name tools that only one agent
   has (e.g. "use the Grep tool"). Say what to do ("search the codebase for…").
   If something has to be tool-specific, put it in a per-tool frontmatter block.
+- When a skill starts a subagent, add that link to `requires.json` (for example
+  `"skills/review-changes": ["agents/code-reviewer"]`). `validate` checks that the names exist.
+  It cannot check that no link is missing.
 - Subagent bodies can pull in shared files with `<!-- include: path/from/repo/root -->`.
   Edit the included file rather than duplicating its text. Safety rules live in
   `shared/untrusted-content.md` and per-repo rules handling in

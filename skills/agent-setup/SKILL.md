@@ -38,6 +38,10 @@ the file formats.
 | Change an existing one | edit its source file in the repo, then validate + sync |
 | Remove one | delete its source, then `agent-setup sync` (sync prunes what it installed) |
 | Choose ticket trackers | ask the user which ones they use, then `agent-setup trackers --set github,jira` (or `none`), then sync |
+| Install only some items | ask which ones, then `agent-setup select --only a,b` (or `--skip a,b`), then sync. A skill also installs the subagents it needs (`requires.json`) |
+| Stop installing one item | `agent-setup select --remove <name>`, then sync. Sync removes only what it installed for that item |
+| Start installing one item | `agent-setup select --add <name>`, then sync |
+| Sync without questions | `agent-setup sync --yes`. It skips new items and prints the `select --add` command. Tell the user about them |
 | Check the setup | `agent-setup doctor` |
 | See what's installed | `agent-setup status` |
 

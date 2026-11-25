@@ -25,10 +25,12 @@ install, asks before changing anything, installs, adds `agent-setup` to
 ```sh
 agent-setup doctor                 # check prerequisites, install state, trackers, MCP sign-ins
 agent-setup trackers --ask         # choose ticket trackers (saved per machine)
+agent-setup select --ask           # choose which skills, subagents and MCP servers to install
+agent-setup select --only a,b      # or --skip, --add, --remove, --all (no flags shows the choice)
 agent-setup status                 # what's installed where
 agent-setup validate               # check sources
 agent-setup sync --dry-run         # preview
-agent-setup sync                   # install / update / prune
+agent-setup sync                   # install / update / prune (-y never asks about new items)
 agent-setup uninstall              # remove everything it installed
 agent-setup new skill|agent|mcp <name>   # scaffold a new source file
 ```
@@ -208,6 +210,7 @@ mcp/<name>.json            MCP server definition, always installed (format below
 mcp/optional/<name>.json   MCP servers installed only for the trackers you choose
 mcp/servers/               code for MCP servers this repo ships (memory.py, devservers.py), run via {repo}
 trackers.json              the tracker choices offered by `agent-setup trackers`
+requires.json              which subagents a skill needs, so `agent-setup select` installs them too
 bin/agent-setup            the installer
 tests/                     unit tests: python3 -m unittest discover -s tests
 evals/                     eval harness for the skills and subagents (see evals/README.md)

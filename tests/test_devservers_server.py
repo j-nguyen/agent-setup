@@ -634,6 +634,36 @@ class LockTests(DevCase):
         self.assertFalse((pdir / "lock").exists())
 
 
+@unittest.skipIf(sys.platform == "win32", "open-file limits are Unix only")
+class OpenFileLimitTests(unittest.TestCase):
+    def setUp(self):
+        import resource
+        self.resource = resource
+        self.saved = resource.getrlimit(resource.RLIMIT_NOFILE)
+        self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, self.saved)
+
+    def child_soft_limit(self) -> int:
+        out = subprocess.run(["/bin/sh", "-c", "ulimit -n"], capture_output=True, text=True, check=True).stdout
+        return int(out.strip())
+
+    def test_a_launchd_default_is_raised_for_the_servers_we_start(self):
+        r = self.resource
+        hard = self.saved[1]
+        r.setrlimit(r.RLIMIT_NOFILE, (256, hard))
+        dev.raise_open_file_limit(4096)
+        expected = 4096 if hard == r.RLIM_INFINITY else min(4096, hard)
+        self.assertEqual(r.getrlimit(r.RLIMIT_NOFILE)[0], expected)
+        self.assertEqual(self.child_soft_limit(), expected)
+
+    def test_a_higher_limit_is_never_lowered(self):
+        r = self.resource
+        soft, hard = self.saved
+        if soft == r.RLIM_INFINITY or soft < 512:
+            self.skipTest("needs a finite soft limit of at least 512")
+        dev.raise_open_file_limit(256)
+        self.assertEqual(r.getrlimit(r.RLIMIT_NOFILE), (soft, hard))
+
+
 class EnvTests(DevCase):
     def run_env(self, cfg: dict, path=None) -> dict:
         code = "import os,json; print('ENV=' + json.dumps(dict(os.environ)))"

@@ -1690,7 +1690,33 @@ def serve(stdin=None, stdout=None) -> int:
     return 0
 
 
+OPEN_FILES_TARGET = 65536
+
+
+def raise_open_file_limit(target: int = OPEN_FILES_TARGET) -> None:
+    """Raise the soft open-file limit, which every server we start inherits.
+
+    An app that macOS launchd starts gets a soft limit of 256. A file watcher such as Next.js needs thousands, so
+    it fails with "EMFILE: too many open files, watch". A shell usually has a much higher limit, so this makes a
+    server started here behave like one started from a terminal. It never lowers the limit, and it stays under
+    the hard limit.
+    """
+    try:
+        import resource
+    except ImportError:  # not a Unix system
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = target if hard == resource.RLIM_INFINITY else min(target, hard)
+    if soft == resource.RLIM_INFINITY or soft >= wanted:
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+    except (ValueError, OSError):
+        pass  # the system refused. Servers keep the old limit.
+
+
 def main(argv: list[str]) -> int:
+    raise_open_file_limit()
     if argv and argv[0] == "trust" and len(argv) == 2:
         return cli_trust(argv[1])
     if argv:

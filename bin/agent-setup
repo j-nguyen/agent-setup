@@ -713,12 +713,26 @@ def sync_mcp(tools: list[str], old: dict, new: dict, dry: bool, adopt: bool) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Managed instruction blocks: shared/memory-instructions.md -> each tool's global
+# Managed instruction blocks: shared/<name>-instructions.md -> each tool's global
 # instruction file. Only the text between our markers is ever touched.
 # --------------------------------------------------------------------------- #
-INSTR_SRC = REPO / "shared" / "memory-instructions.md"
-INSTR_BEGIN = "<!-- >>> agent-setup memory (managed; edit shared/memory-instructions.md) >>> -->"
-INSTR_END = "<!-- <<< agent-setup memory <<< -->"
+INSTR_NAMES = ("memory", "devservers")
+
+
+def instr_src(name: str) -> Path:
+    return REPO / "shared" / f"{name}-instructions.md"
+
+
+def instr_begin(name: str) -> str:
+    return f"<!-- >>> agent-setup {name} (managed; edit shared/{name}-instructions.md) >>> -->"
+
+
+def instr_end(name: str) -> str:
+    return f"<!-- <<< agent-setup {name} <<< -->"
+
+
+INSTR_BEGIN = instr_begin("memory")
+INSTR_END = instr_end("memory")
 
 
 def instruction_files() -> dict[str, Path]:
@@ -727,25 +741,32 @@ def instruction_files() -> dict[str, Path]:
             "opencode": opencode_home() / "AGENTS.md"}
 
 
-def load_instruction_block() -> str | None:
+def load_instruction_block(name: str = "memory") -> str | None:
     """The managed block (markers included, no trailing newline), or None if there is no source."""
-    if not INSTR_SRC.is_file():
+    src = instr_src(name)
+    if not src.is_file():
         return None
-    return f"{INSTR_BEGIN}\n{INSTR_SRC.read_text(encoding='utf-8').strip()}\n{INSTR_END}"
+    return f"{instr_begin(name)}\n{src.read_text(encoding='utf-8').strip()}\n{instr_end(name)}"
 
 
-def _block_span(text: str, path: Path) -> tuple[int, int] | None:
-    b, e = text.find(INSTR_BEGIN), text.find(INSTR_END)
+def instruction_blocks() -> dict[str, str]:
+    """Every managed block that has a source file, by name, in install order."""
+    return {n: b for n in INSTR_NAMES if (b := load_instruction_block(n))}
+
+
+def _block_span(text: str, path: Path, name: str = "memory") -> tuple[int, int] | None:
+    begin, end = instr_begin(name), instr_end(name)
+    b, e = text.find(begin), text.find(end)
     if b == -1 and e == -1:
         return None
     if b == -1 or e == -1 or e < b:
-        raise ValueError(f"{path}: agent-setup memory markers are unbalanced; fix or remove them by hand")
-    return b, e + len(INSTR_END)
+        raise ValueError(f"{path}: agent-setup {name} markers are unbalanced; fix or remove them by hand")
+    return b, e + len(end)
 
 
-def with_block(text: str, block: str, path: Path) -> str:
+def with_block(text: str, block: str, path: Path, name: str = "memory") -> str:
     """Replace our block in place, or append it after the existing text."""
-    span = _block_span(text, path)
+    span = _block_span(text, path, name)
     if span:
         return text[:span[0]] + block + text[span[1]:]
     if not text:
@@ -754,8 +775,8 @@ def with_block(text: str, block: str, path: Path) -> str:
     return text + sep + block + "\n"
 
 
-def without_block(text: str, path: Path) -> str:
-    span = _block_span(text, path)
+def without_block(text: str, path: Path, name: str = "memory") -> str:
+    span = _block_span(text, path, name)
     if not span:
         return text
     before, after = text[:span[0]], text[span[1]:]
@@ -770,26 +791,30 @@ def read_text_exact(path: Path) -> str:
 
 
 def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool) -> None:
-    block = load_instruction_block()
+    blocks = instruction_blocks()
     files = instruction_files()
-    print(f"Instruction blocks ({len(tools) if block else 0}):")
+    print(f"Instruction blocks ({len(tools) if blocks else 0}):")
     chosen = {str(files[t]) for t in tools}
     keep = {str(p) for t, p in files.items() if t not in tools}  # tools not in this run keep their entries
     for t in tools:
         path = files[t]
-        if block is None:
+        if not blocks:
             continue
-        text = read_text_exact(path)
-        out = with_block(text, block, path)
-        new["instructions"].append(str(path))
-        if out == text:
-            log("ok", path, "memory block")
-            continue
-        log("update" if path.exists() and _block_span(text, path) else ("add" if path.exists() else "create"),
-            path, "memory block")
-        if not dry:
+        original = text = read_text_exact(path)
+        exists = path.exists()
+        for name, block in blocks.items():
+            out = with_block(text, block, path, name)
+            if out == text:
+                log("ok", path, f"{name} block")
+                continue
+            log("update" if exists and _block_span(text, path, name) else ("add" if exists else "create"),
+                path, f"{name} block")
+            text, exists = out, True
+        if str(path) not in new["instructions"]:
+            new["instructions"].append(str(path))
+        if text != original and not dry:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(out.encode("utf-8"))
+            path.write_bytes(text.encode("utf-8"))
     for p in sorted(set(old["instructions"]) - set(new["instructions"])):
         if p in keep and p not in chosen:
             new["instructions"].append(p)
@@ -800,13 +825,14 @@ def sync_instructions(tools: list[str], old: dict, new: dict, dry: bool) -> None
 def remove_block(path: Path, dry: bool) -> None:
     if not path.is_file():
         return
-    text = read_text_exact(path)
-    out = without_block(text, path)
-    if out == text:
-        return
-    log("remove", path, "memory block")
-    if not dry:
-        path.write_bytes(out.encode("utf-8"))
+    original = text = read_text_exact(path)
+    for name in INSTR_NAMES:
+        out = without_block(text, path, name)
+        if out != text:
+            log("remove", path, f"{name} block")
+            text = out
+    if text != original and not dry:
+        path.write_bytes(text.encode("utf-8"))
 
 
 def log(action: str, path: Path, detail: str = "") -> None:
@@ -830,7 +856,8 @@ def cmd_sync(args) -> int:
     load_mcp()  # validate everything before writing anything, so a bad file can't leave a half-done sync
     for t in tmap:  # same for the instruction files: unbalanced markers stop the sync before any write
         path = instruction_files()[t]
-        _block_span(read_text_exact(path), path)
+        for name in INSTR_NAMES:
+            _block_span(read_text_exact(path), path, name)
     old = load_manifest()
     new = empty_manifest()
     new["mcp"] = {t: list(v) for t, v in old["mcp"].items()}  # tools not in this run keep theirs
@@ -933,8 +960,9 @@ def cmd_status(_args) -> int:
         print(f"  {state:<8} {p}")
     for p in m["instructions"]:
         path = Path(p)
-        state = "ok" if path.is_file() and _block_span(read_text_exact(path), path) else "MISSING"
-        print(f"  {state:<8} {p}  (memory block)")
+        for name in instruction_blocks():
+            state = "ok" if path.is_file() and _block_span(read_text_exact(path), path, name) else "MISSING"
+            print(f"  {state:<8} {p}  ({name} block)")
     for tool, names in m["mcp"].items():
         for n in names:
             print(f"  mcp      {tool}:{n}")
@@ -947,6 +975,14 @@ def memory_store_root() -> Path:
         return Path(os.environ["AGENT_MEMORY_DIR"]).expanduser()
     xdg = os.environ.get("XDG_DATA_HOME")
     return (Path(xdg).expanduser() if xdg else home() / ".local" / "share") / "agent-memory"
+
+
+def devservers_state_root() -> Path:
+    """Where mcp/servers/devservers.py keeps its state (same rule, kept in sync by hand)."""
+    if os.environ.get("DEVSERVERS_DIR"):
+        return Path(os.environ["DEVSERVERS_DIR"]).expanduser()
+    xdg = os.environ.get("XDG_STATE_HOME")
+    return (Path(xdg).expanduser() if xdg else home() / ".local" / "state") / "devservers"
 
 
 def claude_auto_memory_off() -> tuple[bool, str]:
@@ -1022,13 +1058,12 @@ def cmd_doctor(_args) -> int:
             if s["name"] not in m["mcp"].get(tool, []):
                 stale += 1
                 report(False, f"MCP server {s['name']} not installed for {tool}", "run `agent-setup sync`")
-    block = load_instruction_block()
-    if block:
+    for name, block in instruction_blocks().items():
         for tool, path in instruction_files().items():
             ok = block in read_text_exact(path)
             stale += not ok
             if not ok:
-                report(False, f"memory instructions missing or out of date for {tool} ({path})",
+                report(False, f"{name} instructions missing or out of date for {tool} ({path})",
                        "run `agent-setup sync`")
     gone = [p for p in m["skills"] + m["agents"] if not (Path(p).exists() or Path(p).is_symlink())]
     for p in gone:
@@ -1047,6 +1082,13 @@ def cmd_doctor(_args) -> int:
         print(f"  {'ok  ' if off else 'todo'} Claude auto-memory: {why}"
               + ("" if off else "\n         -> set \"autoMemoryEnabled\": false in ~/.claude/settings.json "
                                 "(or toggle it with /memory), and unset CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"))
+
+    print("Dev servers")
+    dev_root = devservers_state_root()
+    print(f"  info devservers state: {dev_root}")
+    if re.match(r"^/mnt/[a-zA-Z]/", str(dev_root)):
+        print("  warn the devservers state is on a Windows drive under WSL (slow, file modes are not kept)\n"
+              "         -> set DEVSERVERS_DIR to a path in your Linux home")
 
     print("Ticket trackers")
     cfg = load_user_config()

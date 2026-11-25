@@ -35,8 +35,8 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")  # newest first
 SERVER_INFO = {"name": "memory", "version": "1.0.0"}
 
 INSTRUCTIONS = (
-    "Shared persistent memory. At the start of a task call `search` with no query and your "
-    "project_path to see what is known. `save` durable facts (preferences, corrections, project "
+    "Shared persistent memory. Call `search` (with your project_path) only when earlier context "
+    "would help: non-trivial project work, or the user refers to something from before. `save` durable facts (preferences, corrections, project "
     "decisions, references); `update` instead of duplicating; `forget` stale facts. Never save "
     "secrets. Use only this server for memory, never built-in memory files."
 )

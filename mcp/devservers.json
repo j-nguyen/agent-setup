@@ -1,0 +1,8 @@
+{
+  "$comment": "Dev-server manager (stdlib Python, stdio). State under $DEVSERVERS_DIR, default ~/.local/state/devservers. Runs only commands from a trusted .agents/devservers.json. {repo} is this checkout, filled in at sync, so moving the repo needs a re-sync. Needs python3 on the agent's PATH (and the project's toolchain). Codex pre-approves only the read-only tools; start, setup, stop, restart, trust and configure always prompt. No secrets.",
+  "command": "python3",
+  "args": ["{repo}/mcp/servers/devservers.py"],
+  "codex": {"tools": {"status": {"approval_mode": "approve"},
+                      "logs": {"approval_mode": "approve"},
+                      "wait_ready": {"approval_mode": "approve"}}}
+}

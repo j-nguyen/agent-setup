@@ -108,6 +108,71 @@ Python standard library.
   - *Claude Code's built-in auto-memory* must be switched off by you
     (`"autoMemoryEnabled": false` in `~/.claude/settings.json`); `agent-setup doctor`
     reminds you until it is. See INSTALL.md.
+- **devservers** (MCP server, `mcp/servers/devservers.py`, Python standard library
+  only, stdio): every agent can set up, start, watch and stop the dev servers of a
+  git worktree through one shared registry, for any stack.
+  - *Tools:* `status`, `start`, `setup`, `stop`, `restart`, `logs`, `wait_ready`,
+    `trust` and `configure`. Each takes the agent's `project_path` (the worktree).
+    Servers run detached in their own process group, so they outlive the agent
+    session, and `stop` kills the whole group (TERM, then KILL after `stop_timeout`).
+  - *Config:* `.agents/devservers.json` (committed) merged with the personal,
+    git-excluded `.agents/devservers.local.json` (top-level keys replace; `servers`
+    merge by name):
+
+    ```jsonc
+    {"setup": "yarn wt setup"                      // delegated, or an object:
+              | {"copy": [".env"], "install": "npm ci", "after_install": "..."},
+     "preflight": [{"run": "...", "in": "main", "hint": "..."}],
+     "ports": {"PORT": 3000},                     // base + the worktree's slot (main = 0)
+     "ports_from": {"env_file": ".env.yarn"},     // ports a delegated setup chose
+     "env": {}, "env_strip": [], "max_running": 3, "idle_timeout_minutes": 0,
+     "servers": {"dev": {"run": "npm run dev", "default": true, "stop_signal": "TERM",
+                         "ready": {"log": "Ready in", "port": "PORT", "timeout_sec": 120}}}}
+    ```
+
+    Commands run through `sh`, so `$PORT` reaches servers that take the port as an
+    argument (`php artisan serve --port=$PORT`). Without a config, `start` only
+    proposes one (detected from lockfiles, `package.json` `dev*` scripts, Procfiles,
+    `manage.py`, `artisan`, `go.mod`, `Cargo.toml`, compose files); `configure`
+    writes it after the user agrees.
+  - *Trust:* a new or changed config does not run. The tools return the commands, a
+    diff from the trusted copy and a hash; the agent calls `trust` with the hash
+    only after the user approves (your client prompts for that call). From a
+    terminal: `python3 mcp/servers/devservers.py trust <worktree>`. The approval is
+    remembered by the hash of the merged config.
+  - *Setup:* a `setup` string is delegated to the project; an object does the default
+    steps: take a slot (main 0, worktrees 1 to 49), copy ignored files from the main
+    checkout when absent, install, `after_install`, and write `.env.devservers`
+    (excluded from git) with the worktree's ports and `COMPOSE_PROJECT_NAME`. It runs
+    as a detached task, so use `wait_ready(task="setup")`. `start` refuses until it
+    succeeded, and again after a lockfile or the config changes. Servers get a clean
+    environment: another worktree's `PORT`, `VIRTUAL_ENV`, `npm_*` and so on are
+    stripped first.
+  - *Logs:* one log per run (the previous one kept as `.1`), raw lines with a
+    `since` cursor, `grep` and a line cap; `status` gives the path. The last line of
+    a finished run is `[devservers] exited <code>`.
+  - *State:* `$DEVSERVERS_DIR`, else `$XDG_STATE_HOME/devservers`, else
+    `~/.local/state/devservers`, shared by all agents. Same rule on macOS, Linux and
+    WSL2 (keep it in the Linux home). `agent-setup` never deletes it.
+  - *Guidance:* `sync` writes a second managed block (from
+    `shared/devservers-instructions.md`) next to the memory block. Codex pre-approves
+    only the read-only tools `status`, `logs` and `wait_ready`; everything else
+    prompts.
+  - *Stack examples* (what to put in the config):
+
+    | Stack | setup | run |
+    |---|---|---|
+    | Node (npm) | `{"install": "npm ci"}` | `npm run dev` (`ready.log` for the "Local:" line) |
+    | Rails 7.1+ | `{"copy": [".env", "config/master.key"], "install": "bundle install", "after_install": "bin/rails db:prepare"}` | `rm -f tmp/pids/server.pid && exec bin/rails s -p $PORT`, `ports: {"PORT": 3000}` |
+    | Django + uv | `{"copy": [".env"], "install": "uv sync", "after_install": "uv run python manage.py migrate"}` | `uv run python manage.py runserver 127.0.0.1:$PORT`, `ports: {"PORT": 8000}` |
+    | Go | `{"install": "go mod download"}` | `go run ./cmd/api`, `ready.port: "PORT"` |
+    | Rust | `{"install": "cargo fetch"}` | `cargo run`, `ready.timeout_sec: 900` (cold builds are slow) |
+    | Phoenix | `{"install": "mix deps.get", "after_install": "mix ecto.create && mix ecto.migrate"}` | `mix phx.server`, `ports: {"PORT": 4000}` |
+    | Laravel | `{"copy": [".env"], "install": "composer install", "after_install": "php artisan migrate"}` | `php artisan serve --port=$PORT` |
+    | Compose only | `{}` | `docker compose up`, `stop_signal: "INT"`, ports as `${WEB_PORT:-8080}:80` |
+
+    Use `max_running: 1` for apps that cannot run twice (a fixed Electron user-data
+    dir, one bot token), and `preflight` with `"in": "main"` for a shared database.
 - **`agent-setup` skill**: lets any agent manage this repo for you ("add a skill
   for X to all my agents", "why isn't my subagent showing up?").
 - `.agents/review.md`: extra review rules and conventions (also read by the finding verifier)
@@ -141,7 +206,7 @@ agents/<name>.md           neutral subagent definition (format below)
 shared/*.md                text included into several subagents (safety rules, repo rules)
 mcp/<name>.json            MCP server definition, always installed (format below)
 mcp/optional/<name>.json   MCP servers installed only for the trackers you choose
-mcp/servers/               code for MCP servers this repo ships (memory.py), run via {repo}
+mcp/servers/               code for MCP servers this repo ships (memory.py, devservers.py), run via {repo}
 trackers.json              the tracker choices offered by `agent-setup trackers`
 bin/agent-setup            the installer
 tests/                     unit tests: python3 -m unittest discover -s tests

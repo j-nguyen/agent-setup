@@ -97,6 +97,33 @@ deletes it. Needs `python3` on the agents' PATH, and a re-sync if you move this 
 3. Restart open agent sessions, then ask each CLI to search memory; it should list the
    imported memories.
 
+## 3c. Dev servers
+
+`sync` also installs a `devservers` MCP server (`mcp/servers/devservers.py`) in all
+three agents, and a second managed block of guidance next to the memory one. It starts,
+watches and stops dev servers per git worktree (see the README for the config format).
+State lives in `~/.local/state/devservers` (`$XDG_STATE_HOME/devservers`, or
+`$DEVSERVERS_DIR` if set); on WSL2 keep it in the Linux home, not under `/mnt/c`.
+`uninstall` never deletes it. Needs `python3` on the agents' PATH, plus whatever
+toolchain the project's commands use (node, bundle, uv, ...).
+
+1. **Nothing to approve at install time.** A project opts in with
+   `.agents/devservers.json` (or the personal `.agents/devservers.local.json`). The agent
+   proposes one when there is none, and you confirm it.
+2. **Approving a config.** A new or changed config does not run until you approve it.
+   The agent shows you the commands and a hash and calls `trust` once you agree (your
+   client asks you before that call). Or do it yourself from a terminal:
+
+   ```sh
+   python3 mcp/servers/devservers.py trust /path/to/worktree
+   ```
+3. **Codex** pre-approves only `status`, `logs` and `wait_ready`; it asks for the rest.
+   Claude Code and OpenCode ask before each tool call unless you allow the tools.
+4. **PATH.** Servers inherit the PATH of the agent client. If a command exits 127
+   (not found) in Codex, tell your client to pass PATH on, or start it from a shell
+   that has it.
+5. Restart open agent sessions, then ask one to run `status` from a project.
+
 ## 4. Verify
 
 ```sh

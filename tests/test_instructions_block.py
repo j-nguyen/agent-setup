@@ -139,7 +139,8 @@ class SyncInstructionTests(TempHomeCase):
         text = codex.read_text()
         self.assertNotIn("stale text", text)
         self.assertTrue(text.startswith("top\n\n" + self.m.INSTR_BEGIN))
-        self.assertTrue(text.endswith(self.m.INSTR_END + "\n\nbottom\n"))
+        # the devservers block is appended after the user's text; the memory block's neighbours are untouched
+        self.assertIn(self.m.INSTR_END + "\n\nbottom\n", text)
 
     def test_uninstall_removes_only_the_block(self):
         codex = self.files()["codex"]
@@ -174,7 +175,109 @@ class SyncInstructionTests(TempHomeCase):
         self.assertFalse(self.files()["opencode"].exists())
 
 
+class TwoBlockTests(TempHomeCase):
+    def test_memory_markers_and_block_are_byte_identical_to_before(self):
+        self.assertEqual(self.m.INSTR_BEGIN,
+                         "<!-- >>> agent-setup memory (managed; edit shared/memory-instructions.md) >>> -->")
+        self.assertEqual(self.m.INSTR_END, "<!-- <<< agent-setup memory <<< -->")
+        src = (REPO / "shared" / "memory-instructions.md").read_text(encoding="utf-8").strip()
+        self.assertEqual(self.m.load_instruction_block(), f"{self.m.INSTR_BEGIN}\n{src}\n{self.m.INSTR_END}")
+
+    def test_devservers_markers_are_derived_from_the_name(self):
+        block = self.m.load_instruction_block("devservers")
+        self.assertTrue(block.startswith(
+            "<!-- >>> agent-setup devservers (managed; edit shared/devservers-instructions.md) >>> -->\n"))
+        self.assertTrue(block.endswith("\n<!-- <<< agent-setup devservers <<< -->"))
+        self.assertEqual(list(self.m.instruction_blocks()), ["memory", "devservers"])
+
+    def test_sync_adds_both_blocks_then_is_ok_and_uninstall_removes_both(self):
+        codex = self.m.instruction_files()["codex"]
+        codex.parent.mkdir(parents=True)
+        codex.write_text("my notes\n")
+        r = self.run_cli("sync", "--targets", "codex")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        text = codex.read_text()
+        self.assertTrue(text.startswith("my notes\n"))
+        self.assertEqual(text.count(self.m.INSTR_BEGIN), 1)
+        self.assertEqual(text.count(self.m.instr_begin("devservers")), 1)
+        self.assertLess(text.index(self.m.INSTR_BEGIN), text.index(self.m.instr_begin("devservers")))
+        self.assertIn("memory block", r.stdout)
+        self.assertIn("devservers block", r.stdout)
+        again = self.run_cli("sync", "--targets", "codex")
+        self.assertIn(f"ok        {codex}  (devservers block)", again.stdout)
+        self.assertEqual(codex.read_text(), text)
+        manifest = json.loads(self.m.state_file().read_text())
+        self.assertEqual(manifest["instructions"], [str(codex)])
+        r = self.run_cli("uninstall")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(codex.read_text(), "my notes\n")
+
+    def test_only_the_stale_block_is_updated(self):
+        codex = self.m.instruction_files()["codex"]
+        codex.parent.mkdir(parents=True)
+        mem, dev = self.m.load_instruction_block("memory"), self.m.load_instruction_block("devservers")
+        stale = f"{self.m.instr_begin('devservers')}\nold text\n{self.m.instr_end('devservers')}"
+        codex.write_text(f"top\n\n{mem}\n\nmiddle\n\n{stale}\n\nbottom\n")
+        r = self.run_cli("sync", "--targets", "codex")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(codex.read_text(), f"top\n\n{mem}\n\nmiddle\n\n{dev}\n\nbottom\n")
+        self.assertIn(f"ok        {codex}  (memory block)", r.stdout)
+        self.assertIn(f"update    {codex}  (devservers block)", r.stdout)
+
+    def test_old_install_with_only_memory_block_gains_devservers(self):
+        codex = self.m.instruction_files()["codex"]
+        codex.parent.mkdir(parents=True)
+        mem = self.m.load_instruction_block("memory")
+        codex.write_text(f"{mem}\n")
+        r = self.run_cli("sync", "--targets", "codex")
+        self.assertIn(f"add       {codex}  (devservers block)", r.stdout)
+        self.assertTrue(codex.read_text().startswith(f"{mem}\n"))
+
+    def test_unbalanced_devservers_markers_stop_sync_before_writing(self):
+        codex = self.m.instruction_files()["codex"]
+        codex.parent.mkdir(parents=True)
+        codex.write_text(self.m.instr_begin("devservers") + "\nno end\n")
+        r = self.run_cli("sync", "--targets", "codex,opencode")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("devservers markers are unbalanced", r.stderr + r.stdout)
+        self.assertFalse(self.m.instruction_files()["opencode"].exists())
+
+    def test_dry_run_writes_nothing_and_status_lists_both(self):
+        r = self.run_cli("sync", "--dry-run", "--targets", "codex")
+        self.assertIn("(devservers block)", r.stdout)
+        self.assertFalse(self.m.instruction_files()["codex"].exists())
+        self.run_cli("sync", "--targets", "codex")
+        status = self.run_cli("status").stdout
+        self.assertIn("(memory block)", status)
+        self.assertIn("(devservers block)", status)
+
+    def test_doctor_flags_a_missing_devservers_block(self):
+        codex = self.m.instruction_files()["codex"]
+        codex.parent.mkdir(parents=True)
+        codex.write_text(f"{self.m.load_instruction_block('memory')}\n")
+        r = self.run_cli("doctor", path=str(Path(shutil.which("git")).parent))
+        self.assertIn("devservers instructions missing or out of date for codex", r.stdout)
+        self.assertNotIn("memory instructions missing or out of date for codex", r.stdout)
+
+
 class RepoSettingTests(TempHomeCase):
+    def test_devservers_declaration_and_codex_approvals(self):
+        servers = {s["name"]: s["spec"] for s in self.m.load_mcp()}
+        script = str(REPO / "mcp" / "servers" / "devservers.py")
+        spec = servers["devservers"]
+        self.assertEqual((spec["command"], spec["args"]), ("python3", [script]))
+        self.assertEqual(self.m.mcp_claude(spec)["args"], [script])
+        self.assertEqual(self.m.mcp_opencode(spec)["command"], ["python3", script])
+        codex = self.m.mcp_codex(spec)
+        self.assertEqual(codex["args"], [script])
+        self.assertEqual(codex["tools"], {t: {"approval_mode": "approve"} for t in ("status", "logs", "wait_ready")})
+        self.assertNotIn("default_tools_approval_mode", codex)
+        toml = self.m.toml_inline(codex["tools"])
+        self.assertIn('"status" = { "approval_mode" = "approve" }', toml)
+        self.assertNotIn("start", toml)
+        self.assertFalse({"env", "env_from", "headers", "bearer_token_env"}
+                         & set(json.loads((REPO / "mcp" / "devservers.json").read_text())))
+
     def test_memory_declaration_filled_in_all_renderings(self):
         servers = {s["name"]: s["spec"] for s in self.m.load_mcp()}
         script = str(REPO / "mcp" / "servers" / "memory.py")
@@ -237,6 +340,15 @@ class DoctorTests(TempHomeCase):
         self.settings('{"autoMemoryEnabled": false}')
         r = self.run_cli("doctor", path=str(bin_dir))
         self.assertIn("ok   Claude auto-memory", r.stdout, r.stdout + r.stderr)
+
+    def test_doctor_reports_devservers_state_dir(self):
+        git_dir = str(Path(shutil.which("git")).parent)
+        r = self.run_cli("doctor", extra_env={"DEVSERVERS_DIR": "/mnt/c/Users/x/ds"}, path=git_dir)
+        self.assertIn("info devservers state: /mnt/c/Users/x/ds", r.stdout)
+        self.assertIn("warn the devservers state is on a Windows drive", r.stdout)
+        r = self.run_cli("doctor", path=git_dir)
+        self.assertIn(f"info devservers state: {self.tmp / 'xdg-state' / 'devservers'}", r.stdout)
+        self.assertNotIn("devservers state is on a Windows drive", r.stdout)
 
     def test_doctor_warns_on_mnt_store(self):
         r = self.run_cli("doctor", extra_env={"AGENT_MEMORY_DIR": "/mnt/c/Users/x/mem"},

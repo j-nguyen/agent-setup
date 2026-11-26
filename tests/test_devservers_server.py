@@ -134,6 +134,9 @@ class DevCase(unittest.TestCase):
         self.trust(kw.get("where"))
 
     def alive(self, pid: int) -> bool:
+        child = dev._CHILDREN.get(pid)
+        if child is not None:
+            return child.poll() is None
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -368,8 +371,8 @@ class LifecycleTests(DevCase):
 
     def test_spawn_shape_new_session_devnull_stdin_merged_log_exit_marker(self):
         code = ("import os,sys; print('out'); print('err', file=sys.stderr); "
-                "print('stdin', os.readlink('/proc/self/fd/0')); print('sid', os.getsid(0)==os.getpid() or "
-                "os.getpgrp()==os.getppid()); sys.exit(3)")
+                "print('stdin is devnull', os.path.samestat(os.fstat(0), os.stat(os.devnull))); "
+                "print('sid', os.getsid(0)==os.getpid() or os.getpgrp()==os.getppid()); sys.exit(3)")
         self.setup_trusted(self.server_cfg(run=py(code)))
         rec = self.jcall("start")
         self.assertEqual(os.getpgid(rec["pid"]) if self.alive(rec["pid"]) else rec["pid"], rec["pid"])
@@ -379,7 +382,7 @@ class LifecycleTests(DevCase):
         text = Path(rec["log"]).read_text()
         self.assertIn("out", text)
         self.assertIn("err", text)
-        self.assertIn("/dev/null", text)
+        self.assertIn("stdin is devnull True", text)
         self.assertIn("[devservers] exited 3", text)
 
     def test_exit_marker_survives_exec(self):
@@ -873,6 +876,39 @@ class LogsAndReadyTests(DevCase):
         self.jcall("start")
         self.assertEqual(self.jcall("wait_ready", timeout_sec=15)["result"], "ready")
 
+    def test_wait_ready_requires_every_loopback_http_probe(self):
+        port = free_port()
+        code = """
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health" and not Path("api-ready").exists():
+            self.send_response(503)
+        else:
+            self.send_response(302 if self.path == "/" else 200)
+            self.send_header("Location", "http://example.invalid/")
+        self.end_headers()
+
+HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
+"""
+        probes = [{"port": "PORT", "path": "/"}, {"port": "PORT", "path": "/health"}]
+        cfg = self.server_cfg(run=py(code), ready={"http": probes})
+        cfg["ports"] = {"PORT": port}
+        self.setup_trusted(cfg)
+        self.jcall("start")
+        self.assertEqual(self.jcall("wait_ready", timeout_sec=1)["result"], "waiting")
+        (self.repo / "api-ready").touch()
+        self.assertEqual(self.jcall("wait_ready", timeout_sec=3)["result"], "ready")
+
+    def test_remote_http_probe_urls_are_rejected(self):
+        for path in ("https://example.com/", "//example.com/", "/has space", "/\n"):
+            cfg = self.server_cfg(ready={"http": [{"port": 3000, "path": path}]})
+            with self.assertRaisesRegex(dev.ToolError, "local HTTP path"):
+                dev.check_schema(cfg, "test")
+
     def test_wait_ready_waiting_then_exited_with_last_lines(self):
         self.started(ready={"log": "never appears"})
         out = self.jcall("wait_ready", timeout_sec=1)
@@ -1030,6 +1066,46 @@ class SetupTests(DevCase):
         self.assertIn("no `setup`", self.call("setup"))
         self.assertEqual(self.jcall("start")["result"], "started")
 
+    def test_start_can_run_required_setup_once(self):
+        cfg = self.default_cfg(install="echo ran >> setup-count")
+        self.write_config(cfg)
+        self.assertIn("not trusted", self.err("start", setup_if_needed=True))
+        self.assertFalse((self.repo / "setup-count").exists())
+        self.trust()
+        self.assertIn("has not been set up", self.err("start"))
+        self.assertEqual(self.jcall("start", setup_if_needed=True)["result"], "started")
+        self.assertEqual(self.jcall("start", setup_if_needed=True)["result"], "already running")
+        self.assertEqual((self.repo / "setup-count").read_text(), "ran\n")
+
+    def test_start_stops_after_failed_setup(self):
+        self.setup_trusted(self.default_cfg(install="echo setup-failed; exit 3"))
+        out = self.jcall("start", setup_if_needed=True)
+        self.assertEqual((out["phase"], out["result"], out["last_exit"]["code"]), ("setup", "exited", 3))
+        self.assertIn("setup-failed", out["last_lines"])
+        self.assertEqual([r["name"] for r in self.jcall("status")["instances"]], ["setup"])
+
+    def test_start_reports_pending_setup_and_can_resume(self):
+        self.setup_trusted(self.default_cfg(install="echo ran >> setup-count; sleep 3"))
+        out = self.jcall("start", setup_if_needed=True, setup_timeout_sec=1)
+        self.assertEqual((out["phase"], out["result"]), ("setup", "waiting"))
+        self.assertEqual(self.jcall("start", setup_if_needed=True)["result"], "started")
+        self.assertEqual((self.repo / "setup-count").read_text(), "ran\n")
+
+    def test_worktree_inherits_only_opted_in_main_config(self):
+        wt = self.add_worktree("feature")
+        cfg = self.server_cfg()
+        self.write_config(cfg, local=True)
+        self.assertIsNone(dev.load_config(dev.resolve(str(wt))))
+        cfg["inherit_worktrees"] = True
+        self.write_config(cfg, local=True)
+        self.assertEqual(dev.load_config(dev.resolve(str(wt))), cfg)
+        self.assertIn("not trusted", self.err("start", wt))
+        self.trust()
+        self.assertEqual(self.jcall("start", wt)["worktree"], str(wt))
+        own = self.server_cfg(run="echo separate")
+        self.write_config(own, where=wt, local=True)
+        self.assertEqual(dev.load_config(dev.resolve(str(wt))), own)
+
     def test_setup_twice_while_running_returns_the_task(self):
         self.setup_trusted(self.default_cfg(install="sleep 3"))
         a = self.jcall("setup")
@@ -1049,6 +1125,22 @@ class SetupTests(DevCase):
             self.assertIn(str(port), self.err("start"))
         out = self.jcall("start")
         self.assertEqual(out["ports"], {"WEB_PORT": port})
+
+    def test_named_app_ports_exclude_shared_services_and_need_values_in_worktrees(self):
+        port = free_port()
+        wt = self.add_worktree("feature")
+        cfg = self.server_cfg()
+        cfg["ports_from"] = {"env_file": ".env.yarn", "keys": ["PORT"], "main": {"PORT": port}}
+        cfg["servers"]["dev"]["port_keys"] = ["PORT"]
+        self.write_config(cfg, where=wt)
+        self.trust(wt)
+        self.assertIn("missing port values for PORT", self.err("start", wt))
+        with socket.socket() as db:
+            db.bind(("127.0.0.1", 0))
+            db.listen()
+            (wt / ".env.yarn").write_text(f"PORT={port}\nDB_PORT={db.getsockname()[1]}\n")
+            self.assertEqual(self.jcall("start", wt)["ports"], {"PORT": port})
+        self.assertEqual(dev.file_ports(dev.resolve(str(self.repo)), cfg), {"PORT": port})
 
 
 if __name__ == "__main__":

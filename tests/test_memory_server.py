@@ -96,6 +96,36 @@ class ToolTests(StoreTestCase):
         out = mem.tool_search({"query": "needle", "project_path": str(self.proj)})
         self.assertEqual(out.count("\n## ") + 1, 10)
 
+    def test_compact_search_and_exact_lookup(self):
+        body = "Beginning. " * 100 + "needle here " + "End. " * 100
+        self.save("alpha", body=body)
+        self.save("alpha", scope="global", body="A global needle")
+        args = {"project_path": str(self.proj)}
+        hits = mem.tool_search({**args, "query": "needle", "compact": True})
+        self.assertIn("alpha [project, feedback]", hits)
+        self.assertIn("alpha [global, feedback]", hits)
+        self.assertIn("needle here", hits)
+        self.assertLess(len(hits), 500)
+        note = mem.tool_get({**args, "name": "alpha", "scope": "project"})
+        self.assertIn(body.rstrip(), note)
+        self.assertNotIn("A global needle", note)
+
+    def test_stale_revision_cannot_update_or_forget_a_note(self):
+        self.save("alpha", scope="global")
+        args = {"name": "alpha", "scope": "global"}
+        note = mem.tool_get(args)
+        revision = note.split("Revision: ", 1)[1].splitlines()[0]
+        mem.tool_update({**args, "revision": revision, "body": "new body"})
+        for write in (mem.tool_update, mem.tool_forget):
+            with self.assertRaisesRegex(mem.ToolError, "changed since it was read"):
+                write({**args, "revision": revision})
+        note = mem.tool_get(args)
+        self.assertIn("new body", note)
+        current = note.split("Revision: ", 1)[1].splitlines()[0]
+        mem.tool_forget({**args, "revision": current})
+        with self.assertRaisesRegex(mem.ToolError, "not found"):
+            mem.tool_get(args)
+
     def test_scope_default(self):
         self.save("u", "user")
         self.save("f", "feedback")
@@ -250,7 +280,7 @@ class StdioTests(StoreTestCase):
         self.assertEqual(out[0]["result"]["protocolVersion"], "2024-11-05")
         self.assertIn("search", out[0]["result"]["instructions"])
         tools = out[1]["result"]["tools"]
-        self.assertEqual([t["name"] for t in tools], ["search", "save", "update", "forget"])
+        self.assertEqual([t["name"] for t in tools], ["search", "get", "save", "update", "forget"])
         for t in tools:
             self.assertIn("project_path", t["inputSchema"]["properties"])
 

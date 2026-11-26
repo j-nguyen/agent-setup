@@ -30,6 +30,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -43,6 +44,7 @@ LOCK_WAIT = 10.0
 PREFLIGHT_TIMEOUT = 30
 DEFAULT_STOP_TIMEOUT = 10
 DEFAULT_WAIT = 60
+DEFAULT_SETUP_WAIT = 30
 MAX_WAIT = 240
 DEFAULT_LINES = 200
 MAX_LINES = 2000
@@ -60,8 +62,8 @@ BUILTIN_ENV = {"COMPOSE_PROJECT_NAME", "VIRTUAL_ENV", "BUNDLE_GEMFILE", "INIT_CW
 
 INSTRUCTIONS = (
     "Dev-server manager. Call `status` with your project_path (the worktree you work in) to see what runs. "
-    "`start` runs a server from the project's trusted config; if the worktree needs `setup`, call `setup`, "
-    "then `wait_ready` with task=\"setup\", then `start`. Use `wait_ready`, `logs` (with `since` cursors and "
+    "Use `start` with setup_if_needed=true to prepare the worktree and start its server from a trusted config. "
+    "If setup is still running, wait for it and retry start. Use `wait_ready`, `logs` (with `since` cursors and "
     "`grep`) and `stop`/`restart`. With no config, `start` only proposes one: show it to the user and call "
     "`configure` only after they agree. When the config is new or changed, commands are not run: show the user "
     "the commands and call `trust` with the hash only after they approve. Never approve on your own."
@@ -80,8 +82,10 @@ TOOLS = [
          "all_projects": {"type": "boolean", "description": "List all projects and worktrees."}}}},
     {"name": "start",
      "description": "Start a server in this worktree from the trusted config. Returns the running one if it "
-                    "already runs. Without a config it only proposes one.",
-     "inputSchema": {"type": "object", "properties": {"project_path": PROJECT_PATH_PROP, "name": NAME_PROP}}},
+                    "already runs. Use setup_if_needed to run required setup first.",
+     "inputSchema": {"type": "object", "properties": {"project_path": PROJECT_PATH_PROP, "name": NAME_PROP,
+         "setup_if_needed": {"type": "boolean", "description": "Run required setup and start if it succeeds."},
+         "setup_timeout_sec": {"type": "integer", "description": "Seconds to wait for setup. Default 30, max 240."}}}},
     {"name": "setup",
      "description": "Prepare this worktree (slot, copied files, install, env file) as a detached task named "
                     "`setup`. Follow with wait_ready(task=\"setup\").",
@@ -110,7 +114,7 @@ TOOLS = [
          "grep": {"type": "string", "description": "Regex; only matching lines."},
          "max_lines": {"type": "integer", "description": f"Default {DEFAULT_LINES}, max {MAX_LINES}."}}}},
     {"name": "wait_ready",
-     "description": "Wait until the server is ready (log regex and/or port), up to timeout_sec (default 60, max "
+     "description": "Wait for the configured log, TCP and HTTP checks, up to timeout_sec (default 60, max "
                     "240). Returns ready, waiting (call again) or exited (with the last 30 lines).",
      "annotations": {"readOnlyHint": True},
      "inputSchema": {"type": "object", "properties": {
@@ -382,11 +386,11 @@ def project_lock(pdir: Path):
 # Config: schema, merge, hash
 # --------------------------------------------------------------------------- #
 TOP_KEYS = {"setup", "preflight", "ports", "ports_from", "env", "env_strip", "max_running",
-            "idle_timeout_minutes", "servers"}
+            "idle_timeout_minutes", "servers", "inherit_worktrees"}
 SETUP_KEYS = {"copy", "install", "after_install"}
 PREFLIGHT_KEYS = {"run", "in", "hint"}
-SERVER_KEYS = {"run", "default", "stop_signal", "stop_timeout", "ready"}
-READY_KEYS = {"log", "port", "timeout_sec"}
+SERVER_KEYS = {"run", "default", "stop_signal", "stop_timeout", "ready", "port_keys"}
+READY_KEYS = {"log", "port", "http", "timeout_sec"}
 
 
 def _is_int(v) -> bool:
@@ -418,6 +422,11 @@ def _check_setup(v, errs: list) -> None:
             errs.append(f"setup.{k}: must be a non-empty command string")
 
 
+def _valid_port_ref(port) -> bool:
+    return (_is_int(port) and 0 < port < 65536
+            or isinstance(port, str) and ENV_KEY_RE.fullmatch(port) is not None)
+
+
 def _check_ready(v, where: str, errs: list) -> None:
     if not isinstance(v, dict):
         errs.append(f"{where}: must be an object")
@@ -434,9 +443,24 @@ def _check_ready(v, where: str, errs: list) -> None:
                         errs.append(f"{where}.log: group name {g!r} is not an env var name")
             except re.error as e:
                 errs.append(f"{where}.log: invalid regex: {e}")
-    if "port" in v and not (_is_int(v["port"]) and 0 < v["port"] < 65536
-                            or isinstance(v["port"], str) and ENV_KEY_RE.match(v["port"])):
+    if "port" in v and not _valid_port_ref(v["port"]):
         errs.append(f"{where}.port: must be a port number or the name of a port (a `ports` key)")
+    if "http" in v:
+        probes = v["http"]
+        if not isinstance(probes, list) or not probes:
+            errs.append(f"{where}.http: must be a non-empty list of HTTP checks")
+        else:
+            for i, probe in enumerate(probes):
+                label = f"{where}.http[{i}]"
+                if not isinstance(probe, dict):
+                    errs.append(f"{label}: must be an object")
+                    continue
+                _unknown(probe, {"port", "path"}, label, errs)
+                if not _valid_port_ref(probe.get("port")):
+                    errs.append(f"{label}.port: must be a port number or the name of a port")
+                path = probe.get("path")
+                if not isinstance(path, str) or not re.fullmatch(r"/[!-~]*", path) or path.startswith("//"):
+                    errs.append(f"{label}.path: must be a local HTTP path, such as /health")
     if "timeout_sec" in v and not (_is_int(v["timeout_sec"]) and v["timeout_sec"] > 0):
         errs.append(f"{where}.timeout_sec: must be a positive integer")
 
@@ -461,6 +485,9 @@ def _check_server(name, s, errs: list) -> None:
         errs.append(f"{where}.stop_timeout: must be a positive integer (seconds)")
     if "ready" in s:
         _check_ready(s["ready"], f"{where}.ready", errs)
+    if "port_keys" in s and not (_is_str_list(s["port_keys"])
+                                 and all(ENV_KEY_RE.fullmatch(k) for k in s["port_keys"])):
+        errs.append(f"{where}.port_keys: must be a list of env var names")
 
 
 def check_schema(cfg, label: str) -> dict:
@@ -471,6 +498,8 @@ def check_schema(cfg, label: str) -> dict:
     _unknown(cfg, TOP_KEYS, "config", errs)
     if "setup" in cfg:
         _check_setup(cfg["setup"], errs)
+    if "inherit_worktrees" in cfg and not isinstance(cfg["inherit_worktrees"], bool):
+        errs.append("inherit_worktrees: must be true or false")
     if "preflight" in cfg:
         pf = cfg["preflight"]
         if not isinstance(pf, list):
@@ -502,10 +531,19 @@ def check_schema(cfg, label: str) -> dict:
                 errs.append(f"ports: bases must be at least {SLOT_COUNT} apart (each worktree adds its slot)")
     if "ports_from" in cfg:
         pf = cfg["ports_from"]
-        if not (isinstance(pf, dict) and set(pf) == {"env_file"} and isinstance(pf["env_file"], str)):
-            errs.append("ports_from: must be {\"env_file\": \"<relative path>\"}")
-        elif _bad_relpath(pf["env_file"]):
-            errs.append("ports_from.env_file: must be a relative path inside the worktree")
+        if not isinstance(pf, dict):
+            errs.append("ports_from: must be an object with env_file")
+        else:
+            _unknown(pf, {"env_file", "keys", "main"}, "ports_from", errs)
+            if not isinstance(pf.get("env_file"), str) or _bad_relpath(pf["env_file"]):
+                errs.append("ports_from.env_file: must be a relative path inside the worktree")
+            if "keys" in pf and not (_is_str_list(pf["keys"]) and pf["keys"]
+                                     and all(ENV_KEY_RE.fullmatch(k) for k in pf["keys"])):
+                errs.append("ports_from.keys: must be a non-empty list of env var names")
+            if "main" in pf and not (isinstance(pf["main"], dict) and all(
+                    ENV_KEY_RE.fullmatch(k) and _is_int(port) and 0 < port < 65536
+                    for k, port in pf["main"].items())):
+                errs.append("ports_from.main: must map env var names to port numbers")
     if "env" in cfg:
         e = cfg["env"]
         if not (isinstance(e, dict) and all(ENV_KEY_RE.match(k) and isinstance(v, str) for k, v in e.items())):
@@ -576,10 +614,17 @@ def _read_config_file(path: Path, label: str) -> dict | None:
 
 
 def load_config(ctx: Ctx) -> dict | None:
-    """The merged, validated config of this worktree, or None when neither file exists."""
+    """Read worktree config, with an opt-in fallback from the main checkout."""
     agents = Path(ctx.worktree) / ".agents"
-    merged = merge_config(_read_config_file(agents / TEAM_FILE, "team"),
-                          _read_config_file(agents / LOCAL_FILE, "local"))
+    team = _read_config_file(agents / TEAM_FILE, "team")
+    local = _read_config_file(agents / LOCAL_FILE, "local")
+    if team is None and local is None and ctx.worktree != ctx.root:
+        main_path = Path(ctx.root) / ".agents" / LOCAL_FILE
+        main_local = _read_config_file(main_path, "main local")
+        if main_local and main_local.get("inherit_worktrees"):
+            local = main_local
+            team = _read_config_file(main_path.with_name(TEAM_FILE), "main team")
+    merged = merge_config(team, local)
     return check_merged(merged) if merged is not None else None
 
 
@@ -874,12 +919,16 @@ def port_map(cfg: dict, slot: int) -> dict[str, int]:
 
 def file_ports(ctx: Ctx, cfg: dict) -> dict[str, int]:
     """Ports a delegated setup chose, read from `ports_from.env_file`. Checked and reported, not injected."""
-    env_file = (cfg.get("ports_from") or {}).get("env_file")
-    out: dict[str, int] = {}
+    spec = cfg.get("ports_from") or {}
+    env_file = spec.get("env_file")
+    keys = spec.get("keys")
+    out = dict(spec.get("main") or {}) if ctx.worktree == ctx.root else {}
     if env_file and not _bad_relpath(env_file):
         for k, v in parse_env_file(Path(ctx.worktree) / env_file).items():
-            if k.upper().endswith("PORT") and v.isdigit() and 0 < int(v) < 65536:
-                out[k] = int(v)
+            selected = k in keys if keys is not None else k.upper().endswith("PORT")
+            digits = v.lstrip("0")
+            if selected and re.fullmatch(r"[0-9]{1,5}", digits) and 0 < int(digits) < 65536:
+                out[k] = int(digits)
     return out
 
 
@@ -934,6 +983,7 @@ def build_env(ctx: Ctx, cfg: dict, slot: int, ports: dict[str, int],
     env.update(cfg.get("env") or {})
     env["DEVSERVERS_SLOT"] = str(slot)
     env["DEVSERVERS_WORKTREE"] = ctx.worktree
+    env["DEVSERVERS_PROJECT"] = ctx.root
     env.update({k: str(v) for k, v in ports.items()})
     if slot >= 1:
         env["COMPOSE_PROJECT_NAME"] = compose_name(ctx, slot)
@@ -1117,11 +1167,29 @@ def read_log_text(path: str, limit: int = 8 * 1024 * 1024) -> str:
         return ""
 
 
+def ready_port(port: int | str, rec: dict) -> int | None:
+    value = port if isinstance(port, int) else (
+        (rec.get("ports") or {}).get(port) or (rec.get("captured") or {}).get(port))
+    return value if _is_int(value) and 0 < value < 65536 else None
+
+
+def http_ready(port: int | None, path: str) -> bool:
+    if port is None:
+        return False
+    conn = HTTPConnection("127.0.0.1", port, timeout=1)
+    try:
+        conn.request("GET", path)
+        with conn.getresponse() as reply:
+            return 200 <= reply.status < 400
+    except (OSError, HTTPException):
+        return False
+    finally:
+        conn.close()
+
+
 def check_ready(ctx: Ctx, rec: dict) -> bool:
     """Evaluate the record's ready conditions (all that are set); records captured ports."""
     ready = rec.get("ready") or {}
-    if not ready.get("log") and ready.get("port") is None:
-        return rec.get("state") == "running"
     if rec.get("state") != "running":
         return False
     ok = True
@@ -1144,8 +1212,7 @@ def check_ready(ctx: Ctx, rec: dict) -> bool:
                 save_record(cur, ctx)
         rec["captured"] = captured
     if ready.get("port") is not None:
-        p = ready["port"]
-        port = p if isinstance(p, int) else (rec.get("ports") or {}).get(p) or captured.get(p)
+        port = ready_port(ready["port"], rec)
         if port is None:
             ok = False
         else:
@@ -1154,7 +1221,8 @@ def check_ready(ctx: Ctx, rec: dict) -> bool:
                     pass
             except OSError:
                 ok = False
-    return ok
+    return ok and all(http_ready(ready_port(probe["port"], rec), probe["path"])
+                      for probe in ready.get("http", []))
 
 
 def describe(ctx: Ctx, rec: dict, check: bool = True) -> dict:
@@ -1288,6 +1356,11 @@ def start_instance(ctx: Ctx, cfg: dict, name: str) -> tuple[dict, bool]:
         slot = slot_for(ctx)
         injected = port_map(cfg, slot)
         ports = {**file_ports(ctx, cfg), **injected}
+        if "port_keys" in server:
+            missing = sorted(set(server["port_keys"]) - ports.keys())
+            if missing:
+                raise ToolError(f"NOT STARTED: missing port values for {', '.join(missing)} in {ctx.worktree}")
+            ports = {key: ports[key] for key in server["port_keys"]}
         for key, port in sorted(ports.items()):
             if not port_free(port):
                 raise ToolError(f"NOT STARTED: port {port} ({key}) is already in use by {port_holder(ctx, port)}")
@@ -1300,9 +1373,23 @@ def start_instance(ctx: Ctx, cfg: dict, name: str) -> tuple[dict, bool]:
 
 
 def tool_start(args: dict) -> str:
+    auto_setup = args.get("setup_if_needed", False)
+    if not isinstance(auto_setup, bool):
+        raise ToolError("setup_if_needed must be a boolean")
+    timeout = _int_arg(args, "setup_timeout_sec", DEFAULT_SETUP_WAIT, 1, MAX_WAIT)
     ctx = resolve(args.get("project_path"))
     cfg = need_trusted(ctx)
     name, _ = pick_server(cfg, args.get("name"))
+    if auto_setup and setup_problem(ctx, cfg):
+        setup = queue_setup(ctx, cfg, only_if_needed=True)
+        if setup.get("run_id"):
+            out = wait_for_instance(ctx, "setup", timeout)
+            if out["result"] != "ready":
+                out["phase"] = "setup"
+                out["next"] = "Retry start with setup_if_needed=true." if out["result"] == "waiting" else "Inspect setup logs."
+                return js(out)
+        if config_hash(need_trusted(ctx)) != config_hash(cfg):
+            raise ToolError("the config changed during setup; call start again")
     rec, existing = start_instance(ctx, cfg, name)
     note = "already running" if existing else "started"
     return js({"result": note, **describe(ctx, rec, check=False),
@@ -1431,18 +1518,16 @@ def write_env_file(ctx: Ctx, slot: int, ports: dict[str, int]) -> str:
     return f"wrote {ENV_FILE}"
 
 
-def tool_setup(args: dict) -> str:
-    ctx = resolve(args.get("project_path"))
-    cfg = need_trusted(ctx)
-    setup = cfg.get("setup")
-    if setup is None:
-        return "This config has no `setup`; call `start` directly."
+def queue_setup(ctx: Ctx, cfg: dict, *, only_if_needed: bool = False) -> dict:
+    setup = cfg["setup"]
     notes: list[str] = []
     with locked(ctx, touch="setup"):
         rec = load_record(ctx, "setup")
         if rec and rec["state"] == "running":
-            return js({"result": "setup already running", **describe(ctx, rec, check=False),
-                       "next": "wait_ready(task=\"setup\")"})
+            return {"result": "setup already running", **describe(ctx, rec, check=False),
+                    "next": "wait_ready(task=\"setup\")"}
+        if only_if_needed and setup_problem(ctx, cfg) is None:
+            return {"result": "setup already complete"}
         slot = slot_for(ctx)
         ports = port_map(cfg, slot)
         info ={"wt_id": wt_id(ctx.worktree), "lock_digest": "", "config_hash": config_hash(cfg)}
@@ -1458,13 +1543,21 @@ def tool_setup(args: dict) -> str:
             info["lock_digest"] = lock_digest(Path(ctx.worktree))
             write_json(marker_path(ctx), {"lock_digest": info["lock_digest"], "config_hash": info["config_hash"],
                                           "time": iso()})
-            return js({"result": "setup complete (nothing to run)", "slot": slot, "notes": notes})
+            return {"result": "setup complete (nothing to run)", "slot": slot, "notes": notes}
         info["lock_digest"] = lock_digest(Path(ctx.worktree))
         env = build_env(ctx, cfg, slot, ports)
         rec = spawn(ctx, "setup", "task", command, env, slot=slot, ports=ports, on_success=info)
         save_record(rec, ctx)
-    return js({"result": "setup started", "notes": notes, **describe(ctx, rec, check=False),
-               "next": "wait_ready(task=\"setup\"), then start"})
+    return {"result": "setup started", "notes": notes, **describe(ctx, rec, check=False),
+            "next": "wait_ready(task=\"setup\"), then start"}
+
+
+def tool_setup(args: dict) -> str:
+    ctx = resolve(args.get("project_path"))
+    cfg = need_trusted(ctx)
+    if "setup" not in cfg:
+        return "This config has no `setup`; call `start` directly."
+    return js(queue_setup(ctx, cfg))
 
 
 # --------------------------------------------------------------------------- #
@@ -1586,16 +1679,19 @@ def tool_logs(args: dict) -> str:
 def tool_wait_ready(args: dict) -> str:
     ctx = resolve(args.get("project_path"))
     name = _target(args, ctx)
-    is_task = args.get("task") == "setup"
+    return js(wait_for_instance(ctx, name, args.get("timeout_sec"), is_task=args.get("task") == "setup"))
+
+
+def wait_for_instance(ctx: Ctx, name: str, timeout, *, is_task: bool = True) -> dict:
     rec0 = refreshed(ctx, name)
     if rec0 is None and is_task:  # a setup with nothing to run leaves only the marker
         cfg = load_config(ctx)
         if cfg is not None and "setup" in cfg and setup_problem(ctx, cfg) is None:
-            return js({"result": "ready", "detail": "setup is complete (nothing to wait for)", "next": "start"})
+            return {"result": "ready", "detail": "setup is complete (nothing to wait for)", "next": "start"}
     if rec0 is None:
         raise ToolError(f"no instance named {name!r} in {ctx.worktree}; start it first")
     default = ((rec0.get("ready") or {}).get("timeout_sec") or DEFAULT_WAIT) if not is_task else DEFAULT_WAIT
-    timeout = _int_arg(args, "timeout_sec", default, 1, MAX_WAIT)
+    timeout = _int_arg({"timeout_sec": timeout}, "timeout_sec", min(default, MAX_WAIT), 1, MAX_WAIT)
     deadline = time.monotonic() + timeout
     while True:
         rec = refreshed(ctx, name)
@@ -1606,14 +1702,14 @@ def tool_wait_ready(args: dict) -> str:
             lines, _, _ = do_logs({"project_path": ctx.worktree, "name": None if is_task else name,
                                    "task": "setup" if is_task else None, "max_lines": 30})
             if is_task and code == 0:
-                return js({"result": "ready", "detail": "setup finished", "last_exit": rec["last_exit"],
-                           "next": "start"})
-            return js({"result": "exited", **describe(ctx, rec, check=False), "last_lines": lines})
+                return {"result": "ready", "detail": "setup finished", "last_exit": rec["last_exit"],
+                        "next": "start"}
+            return {"result": "exited", **describe(ctx, rec, check=False), "last_lines": lines}
         if not is_task and check_ready(ctx, rec):
-            return js({"result": "ready", **describe(ctx, load_record(ctx, name) or rec, check=False)})
+            return {"result": "ready", **describe(ctx, load_record(ctx, name) or rec, check=False)}
         if time.monotonic() >= deadline:
-            return js({"result": "waiting", "detail": f"not ready after {timeout} s; call wait_ready again",
-                       **describe(ctx, rec, check=False)})
+            return {"result": "waiting", "detail": f"not ready after {timeout} s; call wait_ready again",
+                    **describe(ctx, rec, check=False)}
         time.sleep(0.25)
 
 

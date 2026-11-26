@@ -8,19 +8,22 @@ else ~/.local/share/agent-memory):
   projects/<key>/<name>.md     facts for one project; <key> is the project root
                                path with every non-alphanumeric char as "-"
 
-Tools: search, save, update, forget. `python3 memory.py import-claude
+Tools: search, get, save, update, forget. `python3 memory.py import-claude
 [--dry-run]` copies existing Claude Code auto-memory files into the store.
 
 Standard library only. Does not import anything from bin/agent-setup.
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +32,7 @@ NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_NAME = 64
 MAX_BODY_BYTES = 16 * 1024
 MAX_RESULTS = 10
+PREVIEW_LENGTH = 180
 TYPES = ("user", "feedback", "project", "reference")
 SCOPES = ("global", "project")
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")  # newest first
@@ -36,20 +40,28 @@ SERVER_INFO = {"name": "memory", "version": "1.0.0"}
 
 INSTRUCTIONS = (
     "Shared persistent memory. Call `search` (with your project_path) only when earlier context "
-    "would help: non-trivial project work, or the user refers to something from before. `save` durable facts (preferences, corrections, project "
-    "decisions, references); `update` instead of duplicating; `forget` stale facts. Never save "
+    "would help. Use compact=true and open relevant notes with `get`. Save durable facts. "
+    "Before `update` or `forget`, use `get` and pass its revision. Never save "
     "secrets. Use only this server for memory, never built-in memory files."
 )
 
 PROJECT_PATH_PROP = {"type": "string",
                      "description": "Absolute path of your working directory; picks the project scope."}
+NOTE_KEY_PROPS = {"name": {"type": "string"}, "scope": {"type": "string", "enum": list(SCOPES)},
+                  "project_path": PROJECT_PATH_PROP}
+REVISION_PROP = {"type": "string", "description": "Revision from get. Reject the write if the note changed."}
 TOOLS = [
     {"name": "search",
      "description": "Without a query, list every memory (name, scope, type, description) from global and "
-                    "this project. With a query, return up to 10 best matches with their bodies.",
+                    "this project. With a query, use compact=true for up to 10 short previews, then get a note.",
+     "annotations": {"readOnlyHint": True},
      "inputSchema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Words to look for; omit to list the index."},
+         "compact": {"type": "boolean", "description": "Return short excerpts instead of full note bodies."},
          "project_path": PROJECT_PATH_PROP}}},
+    {"name": "get", "description": "Read one note by name and scope. Returns its full body and revision.",
+     "annotations": {"readOnlyHint": True},
+     "inputSchema": {"type": "object", "required": ["name", "scope"], "properties": NOTE_KEY_PROPS}},
     {"name": "save",
      "description": "Create a new memory. Fails if the name already exists in that scope (use update).",
      "inputSchema": {"type": "object", "required": ["name", "description", "type", "body"], "properties": {
@@ -63,18 +75,15 @@ TOOLS = [
     {"name": "update",
      "description": "Change fields of an existing memory. Omitted fields keep their value.",
      "inputSchema": {"type": "object", "required": ["name", "scope"], "properties": {
-         "name": {"type": "string"},
-         "scope": {"type": "string", "enum": list(SCOPES)},
+         **NOTE_KEY_PROPS,
          "description": {"type": "string"},
          "type": {"type": "string", "enum": list(TYPES)},
          "body": {"type": "string"},
-         "project_path": PROJECT_PATH_PROP}}},
+         "revision": REVISION_PROP}}},
     {"name": "forget",
      "description": "Delete a memory.",
-     "inputSchema": {"type": "object", "required": ["name", "scope"], "properties": {
-         "name": {"type": "string"},
-         "scope": {"type": "string", "enum": list(SCOPES)},
-         "project_path": PROJECT_PATH_PROP}}},
+     "inputSchema": {"type": "object", "required": ["name", "scope"],
+                     "properties": {**NOTE_KEY_PROPS, "revision": REVISION_PROP}}},
 ]
 
 
@@ -153,6 +162,7 @@ class Memory:
     created: str
     updated: str
     scope: str = ""
+    revision: str = ""
 
 
 def now_iso() -> str:
@@ -211,12 +221,25 @@ def render_memory(m: Memory) -> str:
 
 
 def read_memory(path: Path, scope: str) -> Memory:
-    meta, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+    raw = path.read_bytes()
+    meta, body = parse_frontmatter(raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"))
     name, desc, typ = meta.get("name"), meta.get("description"), meta.get("type")
     if not isinstance(name, str) or not isinstance(desc, str) or typ not in TYPES:
         raise ValueError("frontmatter needs name, description and a valid type")
     return Memory(name=name, description=desc, type=typ, body=body,
-                  created=str(meta.get("created", "")), updated=str(meta.get("updated", "")), scope=scope)
+                  created=str(meta.get("created", "")), updated=str(meta.get("updated", "")), scope=scope,
+                  revision=hashlib.sha256(raw).hexdigest())
+
+
+@contextmanager
+def note_lock(path: Path):
+    # Keep the lock file so concurrent writers always lock the same inode.
+    locks = store_root() / ".locks"
+    ensure_dir(locks)
+    key = hashlib.sha256(os.fsencode(path.relative_to(store_root()))).hexdigest()
+    with os.fdopen(os.open(locks / key, os.O_CREAT | os.O_WRONLY, 0o600), "wb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def write_atomic(path: Path, content: str) -> None:
@@ -300,11 +323,29 @@ def _score(m: Memory, terms: list[str]) -> int:
     return sum((3 if t in name else 0) + (2 if t in desc else 0) + (1 if t in body else 0) for t in terms)
 
 
+def preview(m: Memory, terms: list[str]) -> str:
+    body = " ".join(m.body.split())
+    match = re.search("|".join(re.escape(t) for t in terms), body, re.IGNORECASE)
+    start = max(0, match.start() - PREVIEW_LENGTH // 3) if match else 0
+    excerpt = body[start:start + PREVIEW_LENGTH]
+    if start:
+        excerpt = "…" + excerpt
+    if len(body) > start + PREVIEW_LENGTH:
+        excerpt += "…"
+    description = m.description[:PREVIEW_LENGTH]
+    if len(m.description) > PREVIEW_LENGTH:
+        description += "…"
+    return f"- {m.name} [{m.scope}, {m.type}]: {description}\n  {excerpt}"
+
+
 def tool_search(args: dict) -> str:
     project_path = args.get("project_path")
     query = args.get("query")
     if query is not None and not isinstance(query, str):
         raise ToolError("query must be a string")
+    compact = args.get("compact", False)
+    if not isinstance(compact, bool):
+        raise ToolError("compact must be a boolean")
     items = list_scope("global", project_path) + list_scope("project", project_path)
     terms = (query or "").lower().split()
     if not terms:
@@ -315,7 +356,30 @@ def tool_search(args: dict) -> str:
     hits = [m for s, m in scored if s > 0][:MAX_RESULTS]
     if not hits:
         return "No matching memories."
+    if compact:
+        return "\n".join(preview(m, terms) for m in hits)
     return "\n\n".join(f"## {m.name} [{m.scope}, {m.type}]\n{m.description}\n\n{m.body}" for m in hits)
+
+
+def existing_note(path: Path, scope: str) -> Memory:
+    try:
+        return read_memory(path, scope)
+    except FileNotFoundError as e:
+        raise ToolError(f"{path.stem} not found in {scope} scope") from e
+    except (ValueError, UnicodeDecodeError) as e:
+        raise ToolError(f"{path.stem} is malformed: {e}") from e
+
+
+def check_revision(memory: Memory, revision) -> None:
+    if revision is not None and _check_text(revision, "revision") != memory.revision:
+        raise ToolError(f"{memory.name} changed since it was read. Call get and review the note before retrying.")
+
+
+def tool_get(args: dict) -> str:
+    name = _check_name(args.get("name"))
+    scope = _check_scope(args.get("scope"))
+    m = existing_note(_path_for(name, scope, args.get("project_path")), scope)
+    return f"## {m.name} [{m.scope}, {m.type}]\n{m.description}\nRevision: {m.revision}\n\n{m.body}"
 
 
 def tool_save(args: dict) -> str:
@@ -326,10 +390,11 @@ def tool_save(args: dict) -> str:
     scope = args.get("scope") or ("global" if typ == "user" else "project")
     _check_scope(scope)
     path = _path_for(name, scope, args.get("project_path"))
-    if path.exists():
-        raise ToolError(f"{name} already exists in {scope} scope; use update")
-    ts = now_iso()
-    write_atomic(path, render_memory(Memory(name, desc, typ, body, ts, ts)))
+    with note_lock(path):
+        if path.exists():
+            raise ToolError(f"{name} already exists in {scope} scope; use get and update")
+        ts = now_iso()
+        write_atomic(path, render_memory(Memory(name, desc, typ, body, ts, ts)))
     return f"Saved {name} ({scope})."
 
 
@@ -337,20 +402,17 @@ def tool_update(args: dict) -> str:
     name = _check_name(args.get("name"))
     scope = _check_scope(args.get("scope"))
     path = _path_for(name, scope, args.get("project_path"))
-    if not path.is_file():
-        raise ToolError(f"{name} not found in {scope} scope")
-    try:
-        m = read_memory(path, scope)
-    except (ValueError, OSError, UnicodeDecodeError) as e:
-        raise ToolError(f"{name} is malformed: {e}") from e
-    if args.get("description") is not None:
-        m.description = _check_description(args["description"])
-    if args.get("type") is not None:
-        m.type = _check_type(args["type"])
-    if args.get("body") is not None:
-        m.body = _check_body(args["body"])
-    m.updated = now_iso()
-    write_atomic(path, render_memory(m))
+    with note_lock(path):
+        m = existing_note(path, scope)
+        check_revision(m, args.get("revision"))
+        if args.get("description") is not None:
+            m.description = _check_description(args["description"])
+        if args.get("type") is not None:
+            m.type = _check_type(args["type"])
+        if args.get("body") is not None:
+            m.body = _check_body(args["body"])
+        m.updated = now_iso()
+        write_atomic(path, render_memory(m))
     return f"Updated {name} ({scope})."
 
 
@@ -358,13 +420,17 @@ def tool_forget(args: dict) -> str:
     name = _check_name(args.get("name"))
     scope = _check_scope(args.get("scope"))
     path = _path_for(name, scope, args.get("project_path"))
-    if not path.is_file():
-        raise ToolError(f"{name} not found in {scope} scope")
-    path.unlink()
+    with note_lock(path):
+        if args.get("revision") is not None:
+            check_revision(existing_note(path, scope), args["revision"])
+        try:
+            path.unlink()
+        except FileNotFoundError as e:
+            raise ToolError(f"{name} not found in {scope} scope") from e
     return f"Forgot {name} ({scope})."
 
 
-TOOL_FUNCS = {"search": tool_search, "save": tool_save, "update": tool_update, "forget": tool_forget}
+TOOL_FUNCS = {"search": tool_search, "get": tool_get, "save": tool_save, "update": tool_update, "forget": tool_forget}
 
 
 # --------------------------------------------------------------------------- #
@@ -464,14 +530,15 @@ def import_claude(dry_run: bool, claude_dir: Path | None = None) -> tuple[int, i
                 skipped += 1
                 continue
             dest = (store_root() / "global" if typ == "user" else store_root() / "projects" / slug) / f"{name}.md"
-            if dest.exists():
-                print(f"  exists    {dest}")
-                skipped += 1
-                continue
+            with nullcontext() if dry_run else note_lock(dest):
+                if dest.exists():
+                    print(f"  exists    {dest}")
+                    skipped += 1
+                    continue
+                if not dry_run:
+                    ts = now_iso()
+                    write_atomic(dest, render_memory(Memory(name, desc, typ, body, ts, ts)))
             print(f"  {'would import' if dry_run else 'import':<9} {f} -> {dest}")
-            if not dry_run:
-                ts = now_iso()
-                write_atomic(dest, render_memory(Memory(name, desc, typ, body, ts, ts)))
             imported += 1
     print(f"{'would import' if dry_run else 'imported'} {imported}, skipped {skipped}")
     return imported, skipped

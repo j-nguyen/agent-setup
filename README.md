@@ -97,8 +97,10 @@ Python standard library.
     the git root (shared by worktrees) with every non-alphanumeric character as `-`.
     Same rule on macOS, Linux and WSL2 (on WSL2 keep it in the Linux home, not `/mnt/c`).
     `agent-setup` never deletes the store.
-  - *Tools:* `search`, `save`, `update`, `forget`. Each takes the agent's
-    `project_path`.
+  - *Tools:* `search`, `get`, `save`, `update`, and `forget`. Pass the agent's
+    `project_path` to each tool. Use `search` with `compact=true` for short
+    excerpts and `get` for the full note. Pass the revision from `get` to
+    `update` or `forget` to reject the change if another session edited the note.
   - *Guidance:* `sync` also writes a managed block (from `shared/memory-instructions.md`)
     into `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md` and
     `~/.config/opencode/AGENTS.md`, telling agents to use this server only. Text
@@ -119,14 +121,15 @@ Python standard library.
     session, and `stop` kills the whole group (TERM, then KILL after `stop_timeout`).
   - *Config:* `.agents/devservers.json` (committed) merged with the personal,
     git-excluded `.agents/devservers.local.json` (top-level keys replace; `servers`
-    merge by name):
+    merge by name). Set `inherit_worktrees: true` in the main checkout's personal
+    config to use its merged config in worktrees that have neither config file.
 
     ```jsonc
     {"setup": "yarn wt setup"                      // delegated, or an object:
               | {"copy": [".env"], "install": "npm ci", "after_install": "..."},
      "preflight": [{"run": "...", "in": "main", "hint": "..."}],
      "ports": {"PORT": 3000},                     // base + the worktree's slot (main = 0)
-     "ports_from": {"env_file": ".env.yarn"},     // ports a delegated setup chose
+     "ports_from": {"env_file": ".env.yarn", "keys": ["PORT"], "main": {"PORT": 3000}},
      "env": {}, "env_strip": [], "max_running": 3, "idle_timeout_minutes": 0,
      "servers": {"dev": {"run": "npm run dev", "default": true, "stop_signal": "TERM",
                          "ready": {"log": "Ready in", "port": "PORT", "timeout_sec": 120}}}}
@@ -137,6 +140,10 @@ Python standard library.
     proposes one (detected from lockfiles, `package.json` `dev*` scripts, Procfiles,
     `manage.py`, `artisan`, `go.mod`, `Cargo.toml`, compose files); `configure`
     writes it after the user agrees.
+    For delegated ports, `keys` limits the env file to ports the app binds.
+    `main` supplies fallback values in the main checkout. A server's `port_keys`
+    selects the ports to check for that server. `DEVSERVERS_PROJECT` points to the
+    main checkout and `DEVSERVERS_WORKTREE` points to the active worktree.
   - *Trust:* a new or changed config does not run. The tools return the commands, a
     diff from the trusted copy and a hash; the agent calls `trust` with the hash
     only after the user approves (your client prompts for that call). From a
@@ -150,6 +157,11 @@ Python standard library.
     succeeded, and again after a lockfile or the config changes. Servers get a clean
     environment: another worktree's `PORT`, `VIRTUAL_ENV`, `npm_*` and so on are
     stripped first.
+    Use `start(setup_if_needed=true)` to run trusted setup before starting. If
+    setup takes longer than `setup_timeout_sec`, it continues in the background.
+  - *HTTP readiness:* Add `"http": [{"port": "PORT", "path": "/health"}]` under a
+    server's `ready`. Every HTTP check must return a 2xx or 3xx status. DevServer
+    connects directly to loopback and does not follow redirects.
   - *Logs:* one log per run (the previous one kept as `.1`), raw lines with a
     `since` cursor, `grep` and a line cap; `status` gives the path. The last line of
     a finished run is `[devservers] exited <code>`.

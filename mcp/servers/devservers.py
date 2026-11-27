@@ -290,6 +290,32 @@ def start_token(pid: int) -> str | None:
     return out if r.returncode == 0 and out else None
 
 
+def _states(args: list[str]) -> list[tuple[int, int, str]]:
+    """(pid, pgid, state) rows from `ps`, or [] if ps fails."""
+    try:
+        r = subprocess.run(["ps", *args, "-o", "pid=,pgid=,stat="], capture_output=True, text=True, timeout=5,
+                           env={**os.environ, "LC_ALL": "C"}, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    return rows
+
+
+# A process that another session's server started stays a zombie after it exits, because only its parent can
+# reap it. Signal 0 still reaches a zombie, so a zombie is checked for and counted as stopped.
+def is_zombie(pid: int) -> bool:
+    return any(p == pid and stat.startswith("Z") for p, _, stat in _states(["-p", str(pid)]))
+
+
+def group_has_live_member(pgid: int) -> bool:
+    rows = _states(["-A"])
+    return not rows or any(g == pgid and not stat.startswith("Z") for _, g, stat in rows)
+
+
 def pid_alive(pid: int, token: str | None) -> bool:
     child = _CHILDREN.get(pid)
     if child is not None and child.poll() is not None:
@@ -301,6 +327,8 @@ def pid_alive(pid: int, token: str | None) -> bool:
         return False
     except PermissionError:
         pass
+    if is_zombie(pid):
+        return False
     current = start_token(pid)
     return not (token and current and token != current)
 
@@ -316,7 +344,10 @@ def group_alive(rec: dict) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        # macOS refuses a signal to a group that holds only zombies.
+        return group_has_live_member(pgid)
+    if not group_has_live_member(pgid):
+        return False
     current = start_token(pid)
     if current is not None and rec.get("token") and current != rec["token"]:
         return False  # the leader's pid now belongs to another process

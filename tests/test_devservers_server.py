@@ -638,6 +638,29 @@ class LockTests(DevCase):
 
 
 @unittest.skipIf(sys.platform == "win32", "open-file limits are Unix only")
+class ZombieTests(unittest.TestCase):
+    def zombie(self, own_group: bool) -> int:
+        code = ("import os,time\npid=os.fork()\nif pid==0:\n"
+                + ("    os.setpgid(0,0)\n" if own_group else "")
+                + "    os._exit(0)\nprint(pid,flush=True); time.sleep(30)")
+        parent = subprocess.Popen([sys.executable, "-u", "-c", code], stdout=subprocess.PIPE, text=True,
+                                  stdin=subprocess.DEVNULL)
+        self.addCleanup(parent.wait)
+        self.addCleanup(parent.kill)
+        pid = int(parent.stdout.readline())
+        self.assertTrue(wait_until(lambda: dev.is_zombie(pid)))
+        return pid
+
+    def test_zombie_counts_as_stopped(self):
+        pid = self.zombie(own_group=True)
+        self.assertFalse(dev.pid_alive(pid, None))
+        self.assertFalse(dev.group_alive({"pid": pid, "pgid": pid}))
+
+    def test_group_with_a_running_member_is_alive(self):
+        pid = self.zombie(own_group=False)
+        self.assertTrue(dev.group_alive({"pid": pid, "pgid": os.getpgid(os.getpid())}))
+
+
 class OpenFileLimitTests(unittest.TestCase):
     def setUp(self):
         import resource
@@ -709,14 +732,14 @@ class EnvTests(DevCase):
     def test_pinned_nvm_node_is_first_on_path(self):
         root = self.install_node("v22.1.0", "v24.22.1", "v24.22.2", "v24.23.0")
         (self.repo / ".nvmrc").write_text("24.22\n")
-        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "NVM_DIR": str(self.tmp / "home" / ".nvm")}):
             env = self.run_env({})
         self.assertEqual(env["PATH"], f"{root / 'v24.22.2' / 'bin'}:/usr/bin:/bin")
 
     def test_path_is_unchanged_without_a_matching_node(self):
         self.install_node("v22.1.0")
         (self.repo / ".nvmrc").write_text("v24\n")
-        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "NVM_DIR": str(self.tmp / "home" / ".nvm")}):
             env = self.run_env({})
         self.assertEqual(env["PATH"], "/usr/bin:/bin")
 

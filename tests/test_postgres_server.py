@@ -65,19 +65,35 @@ class Base(unittest.TestCase):
         stub.write_text(STUB.format(python=sys.executable), encoding="utf-8")
         stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
         self.set_stub()
-        env = mock.patch.dict(os.environ, {"PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"})
+        self.svcfile = self.root / "pg_service.conf"
+        self.svcfile.write_text("[svc]\nhost=localhost\n", encoding="utf-8")  # the default local service
+        self.sysdir = self.root / "sysconf"  # no pg_service.conf in it unless a test writes one
+        self.sysdir.mkdir()
+        env = mock.patch.dict(os.environ, {"PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+                                           "PGSERVICEFILE": str(self.svcfile),
+                                           "PGSYSCONFDIR": str(self.sysdir)})
         env.start()
         self.addCleanup(env.stop)
         pg._CHECK_CACHE.clear()
         self.addCleanup(pg._CHECK_CACHE.clear)
+        self.session_setup = pg.session_setup(pg.parse_config({"service": "x"}, Path("x")))
 
     def set_stub(self, outputs=None, **kw):
         data = {"outputs": (outputs or []) + [["\\echo", CHECK_OK]], **kw}  # first match wins
         (self.bin / "stub.json").write_text(json.dumps(data), encoding="utf-8")
 
-    def calls(self):
+    def raw_calls(self):
         f = self.bin / "calls.jsonl"
         return [json.loads(x) for x in f.read_text().splitlines()] if f.exists() else []
+
+    def calls(self):
+        """Calls with the fixed session SET prefix removed from "cmds" (it is asserted on its own)."""
+        out = []
+        for c in self.raw_calls():
+            n = len(self.session_setup)
+            self.assertEqual(c["cmds"][:n], self.session_setup)
+            out.append({**c, "cmds": c["cmds"][n:]})
+        return out
 
     def config(self, **cfg):
         (self.proj / ".agents" / pg.CONFIG_FILE).write_text(json.dumps(cfg), encoding="utf-8")
@@ -126,9 +142,8 @@ class ConfigTests(Base):
         main = self.root / "main"
         main.mkdir()
         git(main, "init", "-q")
-        git(main, "commit", "-q", "--allow-empty", "-m", "x")
         wt = self.root / "wt"
-        git(main, "worktree", "add", "-q", str(wt), "-b", "feature")
+        git(main, "worktree", "add", "-q", "--orphan", "-b", "feature", str(wt))  # no commit needed
         (main / ".agents").mkdir()
         (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "mainsvc"}', encoding="utf-8")
         project = pg.resolve_project(str(wt))
@@ -142,9 +157,8 @@ class ConfigTests(Base):
         main = self.root / "main"
         main.mkdir()
         git(main, "init", "-q")
-        git(main, "commit", "-q", "--allow-empty", "-m", "x")
         wt = self.root / "wt"
-        git(main, "worktree", "add", "-q", str(wt), "-b", "feature")
+        git(main, "worktree", "add", "-q", "--orphan", "-b", "feature", str(wt))
         project = pg.resolve_project(str(wt))
         cfg = pg.parse_config({"url_env": "DBURL"}, Path("x"))
         with mock.patch.dict(os.environ, {"DBURL": "postgres://env@h/db"}):
@@ -256,7 +270,8 @@ class RoleCheckTests(Base):
         for needle in ("rolsuper", "rolcreaterole", "rolcreatedb", "rolreplication", "pg_has_role", "datdba",
                        "nspowner", "relowner", "proowner", "typowner", "has_database_privilege",
                        "has_schema_privilege", "'INSERT'", "'UPDATE'", "'DELETE'", "'TRUNCATE'",
-                       "has_sequence_privilege"):
+                       "has_sequence_privilege", "has_any_column_privilege(session_user, c.oid, 'INSERT')",
+                       "has_any_column_privilege(session_user, c.oid, 'UPDATE')"):
             self.assertIn(needle, sql)
         for r in pg.ALLOWED_ROLES:
             self.assertIn(r, sql)
@@ -282,10 +297,427 @@ class RoleCheckTests(Base):
         self.assertFalse(err, text)
 
     def test_local_hosts(self):
-        for h in ("localhost", "127.0.0.1", "127.9.9.9", "::1", "/var/run/postgresql"):
+        for h in ("localhost", "127.0.0.1", "127.9.9.9", "::1", "/var/run/postgresql", "/tmp,127.0.0.1",
+                  "localhost,::1", "localhost, [::1] ", "/tmp,,localhost"):
             self.assertTrue(pg.is_local_host(h), h)
-        for h in ("10.0.0.1", "db.example.com", "0.0.0.0"):
+        for h in ("10.0.0.1", "db.example.com", "0.0.0.0", "/nonexistent,attacker.example", "127.0.0.1,10.9.9.9",
+                  "", ",", " , "):
             self.assertFalse(pg.is_local_host(h), h)
+
+    def test_url_host_list_with_remote_entry_refused_before_psql(self):
+        for host in ("/nonexistent,attacker.example", "127.0.0.1,10.9.9.9", ","):
+            (self.proj / ".env").write_text(f"DBURL=postgres://u:p@/db?host={host}\n", encoding="utf-8")
+            self.config(url_env="DBURL")
+            text, err = self.call("query", sql="select 1")
+            self.assertTrue(err, host)
+            self.assertTrue(text.startswith("REMOTE:"), (host, text))
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_url_host_list_all_local_ok(self):
+        self.config(url_env="DBURL")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        for host in ("/tmp,127.0.0.1", "localhost,::1"):
+            (self.proj / ".env").write_text(f"DBURL=postgres://u:p@/db?host={host}\n", encoding="utf-8")
+            pg._CHECK_CACHE.clear()
+            text, err = self.call("query", sql="select 1")
+            self.assertFalse(err, (host, text))
+
+    def test_netloc_host_list_with_remote_entry_refused(self):
+        (self.proj / ".env").write_text("DBURL=postgres://u:p@127.0.0.1,10.9.9.9/db\n", encoding="utf-8")
+        self.config(url_env="DBURL")
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.assertTrue(text.startswith(("REMOTE:", "NOT CONFIGURED:")), text)
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_remote_target_wins_over_not_read_only(self):
+        self.config(service="svc")
+        self.set_stub([["\\echo", "db.example.com 5432\nkind,detail\ninfo,appdb owner\nproblem,role is superuser\n"]])
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("REMOTE:"), text)
+        self.assertNotIn("superuser", text)
+
+
+class HardeningTests(Base):
+    def make_repo(self):
+        main = self.root / "main"
+        main.mkdir()
+        git(main, "init", "-q")
+        (main / ".agents").mkdir()
+        return main
+
+    def test_tracked_config_refused(self):
+        main = self.make_repo()
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "s"}', encoding="utf-8")
+        git(main, "add", "-f", ".agents/" + pg.CONFIG_FILE)  # index only: ls-files reads the index
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("NOT CONFIGURED:"))
+        self.assertIn("tracked by git", text)
+        self.assertEqual(self.raw_calls(), [])
+        # the main checkout's tracked copy is refused for a worktree too
+        wt = self.root / "wt"
+        git(main, "worktree", "add", "-q", "--orphan", "-b", "feature", str(wt))
+        # the orphan worktree has no copy: the config falls back to main's tracked one
+        text, err = self.call("query", sql="select 1", project_path=str(wt))
+        self.assertTrue(err)
+        self.assertIn("tracked by git", text)
+
+    def test_untracked_config_in_git_and_non_git_ok(self):
+        main = self.make_repo()
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertFalse(err, text)
+        self.config(service="svc")  # self.proj is not a git repo
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+
+    def case_insensitive_fs(self):
+        probe = self.root / "CaseProbe"
+        probe.write_text("x", encoding="utf-8")
+        return (self.root / "caseprobe").exists()
+
+    def test_symlinked_agents_dir_refused(self):
+        main = self.root / "main"
+        (main / "cfg").mkdir(parents=True)
+        git(main, "init", "-q")
+        (main / "cfg" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        (main / ".agents").symlink_to("cfg")
+        git(main, "add", "-f", ".agents", "cfg")  # index only, no commit
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("NOT CONFIGURED:"))
+        self.assertIn("symlink", text)
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_symlinked_config_file_refused_even_outside_git(self):
+        real = self.root / "real.json"
+        real.write_text('{"service": "svc"}', encoding="utf-8")
+        (self.proj / ".agents" / pg.CONFIG_FILE).symlink_to(real)
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.assertIn("symlink", text)
+
+    def test_case_variant_tracked_config_refused(self):
+        if not self.case_insensitive_fs():
+            self.skipTest("case-sensitive file system: `.Agents` is a different path")
+        main = self.root / "main"
+        (main / ".Agents").mkdir(parents=True)
+        git(main, "init", "-q")
+        (main / ".Agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        git(main, "add", "-f", ".Agents/" + pg.CONFIG_FILE)
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertTrue(err)
+        self.assertIn("tracked by git", text)
+
+    def test_git_failure_inside_a_repo_fails_closed(self):
+        main = self.make_repo()
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        real_git = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+        stub = self.bin / "git"
+        stub.write_text(f'#!/bin/sh\nfor a in "$@"; do [ "$a" = ls-files ] && exit 128; done\nexec {real_git} "$@"\n',
+                        encoding="utf-8")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("NOT CONFIGURED:"))
+        self.assertIn("cannot be proven untracked", text)
+        self.assertIn("exit 128", text)
+        self.assertEqual(self.raw_calls(), [])
+        # a directory that is not a repository stays allowed even with that git
+        self.config(service="svc")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+
+    def test_git_missing_inside_a_repo_fails_closed(self):
+        main = self.make_repo()
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        with mock.patch.object(pg.subprocess, "run", side_effect=FileNotFoundError("git")):
+            self.assertIn("git is not available", pg.personal_file_problem(str(main), ".agents/" + pg.CONFIG_FILE))
+            self.assertIsNone(pg.personal_file_problem(str(self.proj), ".agents/" + pg.CONFIG_FILE))
+
+    def test_env_file_symlink_or_case_with_allow_remote_refused(self):
+        main = self.make_repo()
+        (main / "real.env").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+        (main / ".env").symlink_to("real.env")
+        project = pg.resolve_project(str(main))
+        remote = pg.parse_config({"url_env": "DBURL", "allow_remote": True}, Path("x"))
+        with self.assertRaises(pg.ToolError) as cm:
+            pg.lookup_url(project, remote)
+        self.assertIn("symlink", str(cm.exception))
+        local = pg.parse_config({"url_env": "DBURL"}, Path("x"))
+        self.assertIn("db.example.com", pg.lookup_url(project, local))
+        (main / ".env").unlink()
+        if self.case_insensitive_fs():
+            (main / ".ENV").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+            git(main, "add", ".ENV")
+            with self.assertRaises(pg.ToolError) as cm:
+                pg.lookup_url(project, remote)
+            self.assertIn("tracked by git", str(cm.exception))
+
+    def test_gitlink_at_agents_refused(self):
+        main = self.make_repo()
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        git(main, "update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",.agents")  # index only
+        text, err = self.call("query", sql="select 1", project_path=str(main))
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("NOT CONFIGURED:"))
+        self.assertIn("nested repository or submodule", text)
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_nested_repo_at_agents_refused_tracked_or_not(self):
+        main = self.make_repo()
+        git(main / ".agents", "init", "-q")
+        (main / ".agents" / pg.CONFIG_FILE).write_text('{"service": "svc"}', encoding="utf-8")
+        for add in (False, True):
+            if add:
+                git(main / ".agents", "add", "-f", pg.CONFIG_FILE)  # tracked in the nested index only
+            text, err = self.call("query", sql="select 1", project_path=str(main))
+            self.assertTrue(err, add)
+            self.assertIn("nested repository or submodule", text)
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_env_file_in_nested_repo_with_allow_remote_refused(self):
+        main = self.make_repo()
+        (main / "sub").mkdir()
+        git(main / "sub", "init", "-q")
+        (main / "sub" / ".env").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+        project = pg.resolve_project(str(main))
+        remote = pg.parse_config({"url_env": "DBURL", "env_file": "sub/.env", "allow_remote": True}, Path("x"))
+        with self.assertRaises(pg.ToolError) as cm:
+            pg.lookup_url(project, remote)
+        self.assertIn("nested repository or submodule", str(cm.exception))
+        local = pg.parse_config({"url_env": "DBURL", "env_file": "sub/.env"}, Path("x"))
+        self.assertIn("db.example.com", pg.lookup_url(project, local))
+
+    def test_git_messages_not_localized(self):
+        self.config(service="svc")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        with mock.patch.dict(os.environ, {"LANG": "de_DE.UTF-8", "LC_ALL": "de_DE.UTF-8"}):
+            text, err = self.call("query", sql="select 1")  # self.proj is not a git repository
+        self.assertFalse(err, text)
+
+    def test_plain_untracked_files_in_a_repo_are_fine(self):
+        main = self.make_repo()
+        (main / ".env").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+        project = pg.resolve_project(str(main))
+        remote = pg.parse_config({"url_env": "DBURL", "allow_remote": True}, Path("x"))
+        self.assertIn("db.example.com", pg.lookup_url(project, remote))
+
+    def test_tracked_env_file_with_allow_remote_refused(self):
+        main = self.make_repo()
+        (main / ".env").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+        git(main, "add", ".env")
+        cfg = pg.parse_config({"url_env": "DBURL", "allow_remote": True}, Path("x"))
+        project = pg.resolve_project(str(main))
+        with self.assertRaises(pg.ToolError) as cm:
+            pg.lookup_url(project, cfg)
+        self.assertIn("tracked by git", str(cm.exception))
+        local = pg.parse_config({"url_env": "DBURL"}, Path("x"))
+        self.assertIn("db.example.com", pg.lookup_url(project, local))  # local-only use is still fine
+
+    def test_every_run_starts_with_session_setup(self):
+        self.config(service="svc", timeout_ms=7000)
+        self.set_stub([["FETCH", "a\n1\n"]])
+        self.call("query", sql="select 1")
+        calls = self.raw_calls()
+        self.assertEqual(len(calls), 2)  # check run and query run
+        for c in calls:
+            self.assertEqual(c["cmds"][:5], ["SET standard_conforming_strings = on",
+                                             "SET statement_timeout = 7000", "SET lock_timeout = 2000",
+                                             "SET idle_in_transaction_session_timeout = 7000",
+                                             "SET default_transaction_read_only = on"])
+            self.assertEqual(c["cmds"][5], "\\echo :HOST :PORT" if c is calls[0] else "BEGIN TRANSACTION READ ONLY")
+            self.assertIn("default_transaction_read_only=on", c["env"]["PGOPTIONS"])
+
+    def service(self, text):
+        self.svcfile.write_bytes(text.encode("utf-8"))  # byte-exact, no newline translation
+
+    def test_service_hostaddr_remote_refused_before_connecting(self):
+        self.config(service="svc")
+        self.service("[other]\nhostaddr=10.0.0.1\n\n[svc]\nhost=localhost\nhostaddr = 127.0.0.1, 203.0.113.7\n")
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("REMOTE: hostaddr 203.0.113.7"), text)
+        self.assertEqual(self.raw_calls(), [])
+
+    def test_service_remote_host_refused(self):
+        self.config(service="svc")
+        self.service("[svc]\nhost=db.example.com\n")
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(text.startswith("REMOTE: host db.example.com"), text)
+
+    def test_service_hostaddr_loopback_ok(self):
+        self.config(service="svc")
+        self.service("[svc]\nhost=db.example.com\nhostaddr=127.0.0.1\n")  # libpq dials hostaddr only
+        self.set_stub([["\\echo", "127.0.0.1 5432\nkind,detail\ninfo,appdb agent_ro\n"], ["FETCH", "a\n1\n"]])
+        # host is remote in the file, so it is still refused: we are conservative on `host`
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.service("[svc]\nhostaddr=::1\nport=5433\n")
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+
+    def test_service_hostaddr_allowed_with_allow_remote(self):
+        self.config(service="svc", allow_remote=True)
+        self.service("[svc]\nhostaddr=203.0.113.7\n")
+        self.set_stub([["\\echo", "db.example.com 5432\nkind,detail\ninfo,appdb agent_ro\n"],
+                       ["FETCH", "a\n1\n"]])
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+
+    def problem(self, text, name="svc"):
+        """service_problem() text for a service file body, or None when the service is proven local."""
+        self.service(text)
+        err = pg.service_problem(name)
+        return None if err is None else str(err)
+
+    def test_service_libpq_rules(self):
+        self.assertIsNone(self.problem("[svc]\nhost=localhost\nhostaddr=127.0.0.1\n"))
+        # a duplicate key: the first value wins
+        self.assertIsNone(self.problem("[svc]\nhost=127.0.0.1\nhost=db.example.com\n"))
+        self.assertIn("REMOTE: host db.example.com", self.problem("[svc]\nhost=db.example.com\nhost=127.0.0.1\n"))
+        # an indented line is its own key
+        self.assertIn("REMOTE: hostaddr 203.0.113.7", self.problem("[svc]\nhost=localhost\n   hostaddr=203.0.113.7\n"))
+        # a duplicate section: only the first is used
+        self.assertIsNone(self.problem("[svc]\nhost=localhost\n[svc]\nhost=db.example.com\n"))
+        self.assertIn("REMOTE", self.problem("[svc]\nhost=db.example.com\n[svc]\nhost=localhost\n"))
+        # a line before the first section is ignored (even a remote host), and so are comments
+        self.assertIsNone(self.problem("host=db.example.com\n# hostaddr=10.0.0.1\n[svc]\nhost=localhost\n"))
+        # a malformed line in another section is ignored; in the matched section it makes the service unknown
+        self.assertIsNone(self.problem("[other]\nbroken line\n[svc]\nhost=localhost\n"))
+        self.assertIn("NOT CONFIGURED", self.problem("[svc]\nhost=localhost\nbroken line\n"))
+        # ldap: unknown
+        self.assertIn("ldap", self.problem("[svc]\nldap://ldap.example.com/db\n"))
+        self.assertIn("ldap", self.problem("[svc]\nhost=localhost\nldap=x\n"))
+        # a comma list: every entry must be local; unix sockets are local
+        self.assertIsNone(self.problem("[svc]\nhost=/var/run/postgresql,localhost\n"))
+        self.assertIn("REMOTE: host db.example.com", self.problem("[svc]\nhost=localhost,db.example.com\n"))
+
+    def test_service_header_is_a_prefix_match_like_libpq(self):
+        self.assertIn("REMOTE: hostaddr 10.0.0.9", self.problem("[svc] # prod\nhostaddr=10.0.0.9\n[svc]\nhost=localhost\n"))
+        self.assertIn("REMOTE: host db.example.com", self.problem("[svc]junk\nhost=db.example.com\n"))
+        self.assertIn("was not found", self.problem("[svcx]\nhost=localhost\n"))
+        self.assertIsNone(self.problem("[svc] # prod\nhost=localhost\n[svc]\nhost=db.example.com\n"))
+
+    def test_service_error_never_quotes_file_content(self):
+        text = self.problem("[svc]\nhost=localhost\npassword hunter2-secret\n")
+        self.assertIn("NOT CONFIGURED", text)
+        self.assertIn("line 3", text)
+        self.assertNotIn("hunter2", text)
+        text = self.problem("[svc]\nldap://user:hunter2-secret@ldap.example.com/x\n")
+        self.assertIn("ldap", text)
+        self.assertNotIn("hunter2", text)
+
+    def checks(self):
+        return sum(1 for c in self.raw_calls() if "\\echo :HOST :PORT" in c["cmds"])
+
+    def test_service_edit_invalidates_role_check_cache(self):
+        for allow_remote in (False, True):
+            pg._CHECK_CACHE.clear()
+            (self.bin / "calls.jsonl").unlink(missing_ok=True)
+            self.config(service="svc", allow_remote=allow_remote)
+            self.service("[svc]\nhost=localhost\nuser=agent_ro\n")
+            self.set_stub([["FETCH", "a\n1\n"]])
+            self.assertFalse(self.call("query", sql="select 1")[1])
+            self.assertFalse(self.call("query", sql="select 1")[1])
+            self.assertEqual(self.checks(), 1)  # unchanged file: cache hit
+            self.service("[svc]\nhost=localhost\nuser=owner\nport=5433\n")  # same service, another role
+            self.set_stub([["\\echo", "localhost 5433\nkind,detail\ninfo,appdb owner\nproblem,role is superuser\n"],
+                           ["FETCH", "a\n1\n"]])
+            text, err = self.call("query", sql="select 1")
+            self.assertEqual(self.checks(), 2, allow_remote)
+            self.assertTrue(err)
+            self.assertTrue(text.startswith("NOT READ-ONLY:"), text)
+
+    def test_other_service_file_forces_new_check(self):
+        self.config(service="svc")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        self.call("query", sql="select 1")
+        other = self.root / "other.conf"
+        other.write_bytes(b"[svc]\nhost=localhost\n")
+        with mock.patch.dict(os.environ, {"PGSERVICEFILE": str(other)}):
+            self.call("query", sql="select 1")
+        self.assertEqual(self.checks(), 2)
+
+    def test_cache_hit_label_matches_its_own_key(self):
+        self.config(service="svc")
+        self.service("[svc]\nhost=localhost\nuser=a\n")
+        self.set_stub([["\\echo", "localhost 5432\nkind,detail\ninfo,appdb alice\n"], ["FETCH", "a\n1\n"]])
+        self.assertIn("role=alice@", self.call("query", sql="select 1")[0])
+        self.service("[svc]\nhost=localhost\nuser=b\n")
+        self.set_stub([["\\echo", "localhost 5432\nkind,detail\ninfo,appdb bob\n"], ["FETCH", "a\n1\n"]])
+        self.assertIn("role=bob@", self.call("query", sql="select 1")[0])
+
+    def test_service_file_split_on_newline_only_like_libpq(self):
+        # \x1c is not a line break for libpq: `[z]` is part of the value and the section goes on
+        self.assertIn("REMOTE: hostaddr 10.0.0.9",
+                      self.problem("[svc]\nhost=localhost\napplication_name=x\x1c[z]\nhostaddr=10.0.0.9\n"))
+        # a bare \r is not a line break for libpq either (fgets); the file must not be read with universal newlines
+        self.assertIn("REMOTE: hostaddr 10.0.0.9",
+                      self.problem("[svc]\nhost=localhost\n# note\r[z]\nhostaddr=10.0.0.9\n"))
+        for ch in ("\r", "\x0b", "\x0c", "\x1d", "\x1e", "\x85", " ", " "):
+            self.assertIn("REMOTE: hostaddr 10.0.0.9",
+                          self.problem(f"[svc]\nhost=localhost\napplication_name=x{ch}y\nhostaddr=10.0.0.9\n"), repr(ch))
+        # CRLF files still parse: the trailing \r is stripped, so the header and values match
+        self.assertIsNone(self.problem("[svc]\r\nhost=localhost\r\n[other]\r\nhost=db.example.com\r\n"))
+        self.assertIn("REMOTE: host db.example.com", self.problem("[svc]\r\nhost=db.example.com\r\n"))
+        # a non-C whitespace character is part of the value, not stripped
+        self.assertIn("REMOTE", self.problem("[svc]\nhost=localhost \n"))
+
+    def test_service_not_found_or_unreadable_fails_closed(self):
+        self.assertIn("was not found", self.problem("[other]\nhost=localhost\n"))
+        self.svcfile.unlink()
+        self.assertIn("was not found", str(pg.service_problem("svc")))
+        self.svcfile.write_bytes(b"[svc]\nhost=\xff\xfe\n")  # not UTF-8
+        self.assertIn("cannot read the service file", str(pg.service_problem("svc")))
+        self.config(service="svc")
+        self.set_stub([["FETCH", "a\n1\n"]])
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("NOT CONFIGURED:"))
+        self.assertEqual(self.raw_calls(), [])
+        self.config(service="svc", allow_remote=True)  # allow_remote overrides the guard
+        self.service("[other]\n")
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+
+    def test_service_user_file_first_then_system_file_even_with_pgservicefile(self):
+        (self.sysdir / "pg_service.conf").write_text("[svc]\nhostaddr=10.9.9.9\n[sysonly]\nhost=localhost\n",
+                                                     encoding="utf-8")
+        self.assertIsNone(self.problem("[svc]\nhost=localhost\n"))  # PGSERVICEFILE has it: it wins
+        self.assertIn("REMOTE: hostaddr 10.9.9.9", self.problem("[x]\n"))  # not there: the system file is used
+        self.assertIsNone(self.problem("[x]\n", "sysonly"))
+        home = self.root / "home"
+        home.mkdir()
+        (home / ".pg_service.conf").write_text("[svc]\nhostaddr=127.0.0.1\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            os.environ.pop("PGSERVICEFILE")
+            self.assertIsNone(pg.service_problem("svc"))  # ~/.pg_service.conf comes first
+
+    def test_service_system_file_location_from_pg_config_or_unknown(self):
+        (self.sysdir / "pg_service.conf").write_text("[svc]\nhost=localhost\n", encoding="utf-8")
+        self.svcfile.write_text("[x]\n", encoding="utf-8")
+        stub = self.root / "pgc" / "pg_config"
+        stub.parent.mkdir()
+        stub.write_text(f"#!/bin/sh\necho {self.sysdir}\n", encoding="utf-8")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        with mock.patch.dict(os.environ, {"PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}"}):
+            os.environ.pop("PGSYSCONFDIR")
+            self.assertEqual(pg.system_service_file(), self.sysdir / "pg_service.conf")
+            self.assertIsNone(pg.service_problem("svc"))
+        # no PGSYSCONFDIR and no pg_config: the system file is unknown, so a service missing from the user file
+        # cannot be proven local
+        with mock.patch.dict(os.environ, {"PATH": str(self.bin)}), \
+                mock.patch.object(pg, "PG_CONFIG_PATHS", ()):
+            os.environ.pop("PGSYSCONFDIR")
+            self.assertIsNone(pg.system_service_file())
+            self.assertIn("location is unknown", str(pg.service_problem("svc")))
+            self.svcfile.write_text("[svc]\nhost=localhost\n", encoding="utf-8")
+            self.assertIsNone(pg.service_problem("svc"))  # found in the user file: no need for the system file
 
 
 class LexerTests(unittest.TestCase):
@@ -544,7 +976,8 @@ class IntegrationTests(unittest.TestCase):
     def setUpClass(cls):
         sfx = uuid.uuid4().hex[:8]
         cls.db, cls.pw = f"mcp_test_{sfx}", "pw-" + sfx
-        cls.roles = {n: f"mcp_{n}_{sfx}" for n in ("ro", "super", "owner", "writer", "member", "creator")}
+        cls.roles = {n: f"mcp_{n}_{sfx}" for n in ("ro", "super", "owner", "writer", "member", "creator",
+                                                   "colwriter", "dbowner")}
         cls.admin(f"CREATE DATABASE {cls.db}")
         cls.db_url = with_user(ADMIN_URL, urlsplit(ADMIN_URL).username, urlsplit(ADMIN_URL).password or "",
                                cls.db)
@@ -554,10 +987,13 @@ class IntegrationTests(unittest.TestCase):
             attrs = "SUPERUSER" if n == "super" else ""
             cls.admin(f"CREATE ROLE {name} LOGIN {attrs} PASSWORD '{cls.pw}'")
         cls.admin(f"GRANT CONNECT ON DATABASE {cls.db} TO {r['ro']}, {r['owner']}, {r['writer']}, "
-                  f"{r['member']}, {r['creator']}")
+                  f"{r['member']}, {r['creator']}, {r['colwriter']}, {r['dbowner']}")
+        cls.admin(f"ALTER DATABASE {cls.db} OWNER TO {r['dbowner']}")
         cls.admin(f"CREATE TABLE t(a int, b text); INSERT INTO t VALUES (1,'x'),(2,'y'),(3,'z'); "
-                  f"GRANT USAGE ON SCHEMA public TO {r['ro']}, {r['writer']}, {r['member']}, {r['creator']}; "
-                  f"GRANT SELECT ON t TO {r['ro']}, {r['member']}, {r['creator']}; "
+                  f"GRANT USAGE ON SCHEMA public TO {r['ro']}, {r['writer']}, {r['member']}, {r['creator']}, "
+                  f"{r['colwriter']}; "
+                  f"GRANT SELECT ON t TO {r['ro']}, {r['member']}, {r['creator']}, {r['colwriter']}; "
+                  f"GRANT UPDATE (b) ON t TO {r['colwriter']}; "
                   f"GRANT SELECT, INSERT ON t TO {r['writer']}; "
                   f"ALTER SCHEMA public OWNER TO {r['super']}; "
                   f"GRANT CREATE ON SCHEMA public TO {r['creator']}; "
@@ -586,8 +1022,9 @@ class IntegrationTests(unittest.TestCase):
     def as_role(self, key, **cfg):
         url = with_user(ADMIN_URL, self.roles[key], self.pw, self.db)
         (self.proj / ".env").write_text(f"DBURL={url}\n", encoding="utf-8")
-        (self.proj / ".agents" / pg.CONFIG_FILE).write_text(json.dumps({"url_env": "DBURL", "allow_remote": True,
-                                                                         **cfg}), encoding="utf-8")
+        (self.proj / ".agents" / pg.CONFIG_FILE).write_text(json.dumps({"url_env": "DBURL", **cfg}),
+                                                                        encoding="utf-8")  # no allow_remote: the
+        # test server must be local, so a wrong REMOTE verdict fails the suite
         pg._CHECK_CACHE.clear()
 
     def call(self, name, **args):
@@ -598,12 +1035,25 @@ class IntegrationTests(unittest.TestCase):
 
     def test_unsafe_roles_refused(self):
         for key, needle in (("super", "superuser"), ("owner", "owns"), ("writer", "can write"),
-                            ("member", "member of"), ("creator", "CREATE on schema")):
+                            ("member", "member of"), ("creator", "CREATE on schema"),
+                            ("colwriter", "can write"), ("dbowner", "owns the database")):
             self.as_role(key)
             text, err = self.call("query", sql="select 1")
             self.assertTrue(err, key)
             self.assertTrue(text.startswith("NOT READ-ONLY:"), (key, text))
             self.assertIn(needle, text, key)
+
+    def test_default_public_create_refused(self):
+        """PostgreSQL 14 and older give PUBLIC CREATE on public; setUpClass revoked it, so grant it back."""
+        self.admin("GRANT CREATE ON SCHEMA public TO PUBLIC", self.db_url)
+        try:
+            self.as_role("ro")
+            text, err = self.call("query", sql="select 1")
+            self.assertTrue(err)
+            self.assertTrue(text.startswith("NOT READ-ONLY:"), text)
+            self.assertIn("CREATE on schema", text)
+        finally:
+            self.admin("REVOKE CREATE ON SCHEMA public FROM PUBLIC", self.db_url)
 
     def test_readonly_role_accepted(self):
         self.as_role("ro")

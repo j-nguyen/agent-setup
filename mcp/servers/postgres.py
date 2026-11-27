@@ -20,6 +20,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -47,7 +48,8 @@ PASS_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PGSERVICEFILE", "PGSYSC
 ALLOWED_ROLES = ("pg_read_all_data", "pg_read_all_settings", "pg_read_all_stats", "pg_stat_scan_tables",
                  "pg_monitor")
 SELECT_LIKE = ("select", "with", "values", "table")
-ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+C_SPACE = " \t\n\r\v\f"  # what C isspace() strips
+ENV_KEY_RE =re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SERVICE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 DOLLAR_RE = re.compile(r"\$([A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$")
@@ -147,7 +149,8 @@ UNION ALL SELECT 'problem', 'role can write ' || count(*) || ' relation(s), e.g.
   || min(quote_ident(n.nspname) || '.' || quote_ident(c.relname))
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE {_NS} AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND (has_table_privilege(session_user, c.oid, 'INSERT') OR has_table_privilege(session_user, c.oid, 'UPDATE')
+  AND (has_any_column_privilege(session_user, c.oid, 'INSERT')
+       OR has_any_column_privilege(session_user, c.oid, 'UPDATE')
        OR has_table_privilege(session_user, c.oid, 'DELETE') OR has_table_privilege(session_user, c.oid, 'TRUNCATE'))
   HAVING count(*) > 0
 UNION ALL SELECT 'problem', 'role can UPDATE ' || count(*) || ' sequence(s), e.g. '
@@ -254,11 +257,79 @@ def parse_config(data, path: Path) -> Config:
                   timeout_ms=_int_in(data, "timeout_ms", DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, path))
 
 
+def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "LANGUAGE": ""}  # we match git's English messages
+    return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=10,
+                          stdin=subprocess.DEVNULL, env=env)
+
+
+def _inside_dot_git(base: str) -> bool:
+    return any((Path(p) / ".git").exists() for p in (base, *Path(base).parents))
+
+
+def personal_file_problem(base: str, relpath: str) -> str | None:
+    """Why base/relpath may not be used as a personal (untracked, plain) file, or None when it is fine.
+
+    Fails closed: a symlink on the way, a tracked file (also with another letter case) and any git failure inside a
+    git work tree all count as a problem. A directory that is not in a git repository passes.
+    """
+    cur = Path(base)
+    for part in Path(relpath).parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return f"{cur} is a symlink; use a real file that only you have"
+    try:
+        top = _git(base, "rev-parse", "--show-toplevel")
+    except (OSError, subprocess.SubprocessError):
+        return f"git is not available to prove {relpath} is untracked" if _inside_dot_git(base) else None
+    if top.returncode != 0:
+        err = top.stderr.strip()
+        if "not a git repository" in err.lower() and "dubious" not in err.lower():
+            return None
+        return f"git failed, so {relpath} cannot be proven untracked ({err[:200] or 'exit ' + str(top.returncode)})"
+    toplevel = os.path.realpath(top.stdout.strip())
+    rel = os.path.relpath(os.path.realpath(os.path.join(base, relpath)), toplevel)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return f"{relpath} resolves outside the repository, so it cannot be proven untracked"
+    nested = f"{relpath} is inside a nested repository or submodule ({{}}); the outer repo cannot show whether it is tracked"
+    prefixes = [p for p in Path(rel).parents if str(p) != "."]  # directories between the toplevel and the file
+    for p in prefixes:
+        if (Path(toplevel) / p / ".git").exists():
+            return nested.format(p)
+    try:
+        sub = _git(os.path.dirname(os.path.realpath(os.path.join(base, relpath))), "rev-parse", "--show-toplevel")
+        staged = _git(toplevel, "ls-files", "-s", "--", *[f":(literal){p}" for p in prefixes]) if prefixes else None
+    except (OSError, subprocess.SubprocessError):
+        return f"git failed, so {relpath} cannot be proven untracked"
+    if sub.returncode != 0 or os.path.realpath(sub.stdout.strip()) != toplevel:
+        return nested.format("its own repository")
+    if staged is not None:
+        if staged.returncode != 0:
+            return f"git ls-files failed (exit {staged.returncode}), so {relpath} cannot be proven untracked"
+        if any(line.startswith("160000 ") for line in staged.stdout.splitlines()):
+            return nested.format("a gitlink in the index")
+    for spec in (rel, f":(literal,icase){rel}"):
+        try:
+            r = _git(toplevel, "ls-files", "--error-unmatch", "--", spec)
+        except (OSError, subprocess.SubprocessError):
+            return f"git failed, so {relpath} cannot be proven untracked"
+        if r.returncode == 0:
+            return f"{relpath} is tracked by git ({base}); keep it personal (add it to .git/info/exclude)"
+        if r.returncode != 1:
+            return f"git ls-files failed (exit {r.returncode}), so {relpath} cannot be proven untracked"
+    return None
+
+
 def load_config(project: Project) -> Config:
     candidates = [Path(project.worktree) / ".agents" / CONFIG_FILE]
     if project.root != project.worktree:
         candidates.append(Path(project.root) / ".agents" / CONFIG_FILE)
     for path in candidates:
+        if not os.path.lexists(path):
+            continue
+        problem = personal_file_problem(str(path.parent.parent), f".agents/{CONFIG_FILE}")
+        if problem:
+            raise not_configured(problem, False)
         if not path.is_file():
             continue
         try:
@@ -298,6 +369,10 @@ def lookup_url(project: Project, cfg: Config) -> str:
     for base in dict.fromkeys((project.worktree, project.root)):
         val = parse_env_file(Path(base) / cfg.env_file).get(cfg.url_env)
         if val:
+            problem = personal_file_problem(base, cfg.env_file) if cfg.allow_remote else None
+            if problem:
+                raise not_configured(f"{problem}. With \"allow_remote\": true the database URL must not come from "
+                                     f"repo content; use a personal env_file or the process environment", False)
             return val
     val = os.environ.get(cfg.url_env)
     if val:
@@ -314,10 +389,11 @@ class Conn:
     env: tuple[tuple[str, str], ...]  # connection variables for the child (no PGOPTIONS)
     secrets: tuple[str, ...]
     host: str | None  # known before connecting for URLs; learned from psql for services
+    extra: tuple[str, ...] = ()  # what else decides where libpq connects (the service files)
 
     @property
     def fingerprint(self) -> str:
-        return hashlib.sha256(json.dumps(self.env).encode("utf-8")).hexdigest()
+        return hashlib.sha256(json.dumps([self.env, self.extra]).encode("utf-8")).hexdigest()
 
 
 def conn_from_url(url: str) -> Conn:
@@ -351,8 +427,25 @@ def conn_from_url(url: str) -> Conn:
 
 def resolve_conn(project: Project, cfg: Config) -> Conn:
     if cfg.service:
-        return Conn(env=(("PGSERVICE", cfg.service),), secrets=(), host=None)
+        return Conn(env=(("PGSERVICE", cfg.service),), secrets=(), host=None, extra=service_inputs())
     return conn_from_url(lookup_url(project, cfg))
+
+
+def service_inputs() -> tuple[str, ...]:
+    """Everything libpq reads to resolve a service: each service file's path and content hash, and the variables
+    that pick those files. Part of the role-check cache key, so editing a service file forces a new check."""
+    out = [f"{k}={os.environ.get(k, '')}" for k in ("PGSERVICEFILE", "PGSYSCONFDIR", "PGPASSFILE", "HOME")]
+    system = system_service_file()
+    for path in (user_service_file(), system):
+        if path is None:
+            out.append("system service file: unknown")
+            continue
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest() if os.path.lexists(path) else "absent"
+        except OSError:
+            digest = "unreadable"
+        out.append(f"{path}:{digest}")
+    return tuple(out)
 
 
 def child_env(conn: Conn, cfg: Config) -> dict[str, str]:
@@ -373,13 +466,20 @@ def redact(text: str, secrets, cap: int = STDERR_CAP) -> str:
     return text if len(text) <= cap else text[:cap] + " [cut]"
 
 
-def is_local_host(host: str) -> bool:
+def _is_local_part(host: str) -> bool:
     if host.startswith("/") or host == "localhost":
         return True
     try:
         return ipaddress.ip_address(host.strip("[]")).is_loopback
     except ValueError:
         return False
+
+
+def is_local_host(host: str) -> bool:
+    """True only when every entry of a comma-separated host list is local. libpq tries each entry in turn, so
+    `/nonexistent,attacker.example` can reach a remote host. An empty list is not local."""
+    parts = [p.strip(C_SPACE) for p in host.split(",") if p.strip(C_SPACE)]
+    return bool(parts) and all(_is_local_part(p) for p in parts)
 
 
 @dataclass(frozen=True)
@@ -405,10 +505,17 @@ class Session:
 PSQL_FLAGS = ["psql", "-X", "-q", "-w", "-v", "ON_ERROR_STOP=1", "--csv", "-P", "pager=off", "-P", "null=NULL"]
 
 
+def session_setup(cfg: Config) -> list[str]:
+    """Fixed first commands of every run. A service file's `options` can replace PGOPTIONS, so set them again."""
+    ms = cfg.timeout_ms
+    return ["SET standard_conforming_strings = on", f"SET statement_timeout = {ms}", "SET lock_timeout = 2000",
+            f"SET idle_in_transaction_session_timeout = {ms}", "SET default_transaction_read_only = on"]
+
+
 def run_psql(cfg: Config, conn: Conn, commands: list[str], tool: str) -> tuple[str, float]:
     """Run psql with one -c per command; return (stdout, ms). Raises ToolError with a D9 prefix."""
     argv = list(PSQL_FLAGS)
-    for c in commands:
+    for c in [*session_setup(cfg), *commands]:
         argv += ["-c", c]
     start = time.monotonic()
     code = -1
@@ -447,7 +554,8 @@ def not_read_only(target: Target, problems: list[str]) -> ToolError:
 
 
 def remote_error(host: str) -> ToolError:
-    return ToolError(f"REMOTE: host {host} is not local. Set \"allow_remote\": true in .agents/{CONFIG_FILE} "
+    what = host if host.startswith(("host ", "hostaddr ")) else f"host {host}"
+    return ToolError(f"REMOTE: {what} is not local. Set \"allow_remote\": true in .agents/{CONFIG_FILE} "
                      f"only for a dev database that is not production and not shared.")
 
 
@@ -463,11 +571,104 @@ def parse_check(out: str) -> tuple[Target, list[str]]:
     return Target(db=db, user=user, host=bits[0], port=bits[1]), problems
 
 
+PG_CONFIG_PATHS = ("/opt/homebrew/opt/libpq/bin/pg_config", "/usr/local/opt/libpq/bin/pg_config")
+
+
+def system_service_file() -> Path | None:
+    """libpq's system service file: $PGSYSCONFDIR, else `pg_config --sysconfdir`; None when unknown."""
+    sysconf = os.environ.get("PGSYSCONFDIR")
+    if not sysconf:
+        found = shutil.which("pg_config")
+        for exe in ([found] if found else []) + list(PG_CONFIG_PATHS):
+            if not os.path.isfile(exe):
+                continue
+            try:
+                r = subprocess.run([exe, "--sysconfdir"], capture_output=True, text=True, timeout=10,
+                                   stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if r.returncode == 0 and r.stdout.strip():
+                sysconf = r.stdout.strip()
+                break
+    return Path(sysconf) / "pg_service.conf" if sysconf else None
+
+
+def user_service_file() -> Path:
+    if os.environ.get("PGSERVICEFILE"):
+        return Path(os.environ["PGSERVICEFILE"])
+    return Path(os.environ.get("HOME") or os.path.expanduser("~")) / ".pg_service.conf"
+
+
+@dataclass(frozen=True)
+class ServiceSection:
+    values: dict[str, str]
+    unknown: str = ""  # why the section cannot be trusted (a syntax error, an ldap lookup)
+
+
+def parse_service_file(text: str, name: str) -> ServiceSection | None:
+    """The first `[name]` section, read like libpq: first value of a key wins, anything else is ignored."""
+    values: dict[str, str] = {}
+    unknown = ""
+    inside = found = False
+    for number, raw in enumerate(text.split("\n"), 1):  # libpq splits on \n only, and strips only C whitespace
+        line = raw.strip(C_SPACE)
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            if found:
+                break
+            inside = found = line.startswith(f"[{name}]")  # libpq: a prefix match, trailing text is ignored
+            continue
+        if not inside:
+            continue
+        key, sep, val = line.partition("=")
+        key = key.strip(C_SPACE)
+        if key == "ldap" or line.startswith("ldap"):
+            unknown = unknown or f"it uses an ldap lookup (line {number})"
+        elif not sep:  # never quote the line: it may hold a secret
+            unknown = unknown or f"it has a line without '=' (line {number})"
+        else:
+            values.setdefault(key, val.strip(C_SPACE))
+    return ServiceSection(values, unknown) if found else None
+
+
+def service_problem(name: str) -> ToolError | None:
+    """Prove the libpq service dials only local servers; None when it does. Fails closed on anything unknown."""
+    system = system_service_file()
+    files = [user_service_file()] + ([system] if system else [])
+    for path in files:
+        if not os.path.lexists(path):
+            continue
+        try:
+            section = parse_service_file(path.read_bytes().decode("utf-8"), name)  # byte-exact: no \r to \n
+        except (OSError, UnicodeDecodeError) as e:
+            return not_configured(f"cannot read the service file {path} ({e.__class__.__name__}), so service "
+                                  f"{name!r} cannot be checked. Fix it or set \"allow_remote\": true", False)
+        if section is None:
+            continue
+        if section.unknown:
+            return not_configured(f"service {name!r} in {path} cannot be checked: {section.unknown}. Fix it or "
+                                  f"set \"allow_remote\": true", False)
+        for key in ("hostaddr", "host"):
+            for value in section.values.get(key, "").split(","):
+                value = value.strip(C_SPACE)
+                if value and not is_local_host(value):
+                    return remote_error(f"{key} {value}")
+        return None
+    why = "" if system else " (the system service file location is unknown: set PGSYSCONFDIR or install pg_config)"
+    return not_configured(f"service {name!r} was not found in {', '.join(map(str, files))}{why}, so it cannot be "
+                          f"checked. Fix the service file or set \"allow_remote\": true", False)
+
+
 def open_session(project: Project, cfg: Config) -> Session:
     """Resolve the connection and run the role check (cached) before any tool SQL."""
     conn = resolve_conn(project, cfg)
     if conn.host and not is_local_host(conn.host) and not cfg.allow_remote:
         raise remote_error(conn.host)
+    if cfg.service and not cfg.allow_remote:
+        problem = service_problem(cfg.service)
+        if problem:
+            raise problem
     key = conn.fingerprint
     hit = _CHECK_CACHE.get(key)
     if hit and hit[0] > time.monotonic():
@@ -475,10 +676,10 @@ def open_session(project: Project, cfg: Config) -> Session:
     else:
         out, _ = run_psql(cfg, conn, [r"\echo :HOST :PORT", ROLE_CHECK_SQL], "check")
         target, problems = parse_check(out)
+        if not is_local_host(target.host) and not cfg.allow_remote:
+            raise remote_error(target.host)  # before NOT READ-ONLY: no catalog details of a remote server
         if problems:
             raise not_read_only(target, problems)
-        if not is_local_host(target.host) and not cfg.allow_remote:
-            raise remote_error(target.host)
         _CHECK_CACHE[key] = (time.monotonic() + CHECK_TTL, target)
     if not is_local_host(target.host) and not cfg.allow_remote:
         raise remote_error(target.host)

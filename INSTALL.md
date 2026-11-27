@@ -210,6 +210,20 @@ these steps. Codex pre-approves `schema`, `query` and `explain`. Deselect it wit
    prints the resolved config, the host, the role check and the warnings below.
 4. Restart open agent sessions, then ask one to run `schema` from the project.
 
+**Refusals you may hit.** The server fails closed when it cannot prove a setting is yours:
+
+- `.agents/postgres.local.json` must be a real, untracked file: not a symlink (nor under a
+  symlinked directory), not tracked by git (also under another letter case), and not inside a
+  submodule or nested repository. If git itself fails inside a repository, it refuses too.
+  List the file in `.git/info/exclude`.
+- With `allow_remote: true`, the `env_file` must pass the same test, because otherwise repo
+  content could choose the database.
+- In service mode the service must be found in `$PGSERVICEFILE` (or `~/.pg_service.conf`) or
+  in the system service file, and its `host` and `hostaddr` must be loopback or a socket
+  unless `allow_remote` is true. A service that uses `ldap` or has a syntax error is refused.
+- On Linux without `pg_config` (Debian: `libpq-dev`), the system service file location is
+  unknown: set `PGSYSCONFDIR` if a service is defined only there.
+
 **What the role check does not cover.** It checks the role, not everything the role can
 reach: SECURITY DEFINER functions owned by a role that can write, the `dblink` and
 `postgres_fdw` extensions, temporary tables (every role has TEMP on the database), and

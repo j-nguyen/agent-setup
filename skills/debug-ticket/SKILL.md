@@ -61,7 +61,9 @@ there are uncommitted changes, mention that in the brief; the debugger won't tou
 
 - **Dependency installs**: allowed from the project's lockfile, unless the user said otherwise.
 - **Local services** (DB, docker compose): allowed if the project defines them
-  for development. Never production.
+  for development. Never production. The `postgres` MCP server (read-only
+  `query` and `schema`) can inspect local database state when the project has
+  `.agents/postgres.local.json`.
 - **Anything the user said** about the environment, accounts or data.
 
 ## 4. Delegate
@@ -102,7 +104,11 @@ unless you're doing the work yourself (last bullet below).
 
 How to start it depends on your environment:
 - **Claude Code**: the Agent/Task tool with `subagent_type: "debugger"`.
-- **Codex**: spawn a subagent with agent type / role `debugger`.
+- **Codex**: spawn a subagent with agent type / role `debugger`, with
+  `fork_turns: "none"` and the brief as its only input, so it does not carry
+  this conversation. Codex does not wake you when a subagent finishes, so run
+  it in the foreground: call `wait_agent` with a long timeout (600000 ms) and
+  wait again if it times out. Don't post a status line after each wait.
 - **OpenCode**: the task/subagent tool with the `debugger` agent (or `@debugger`).
 - **Other tools with named subagents**: use the one named `debugger`.
 - **Only if your tool has no way to start a subagent at all**, or `debugger` isn't installed: do it yourself. Read

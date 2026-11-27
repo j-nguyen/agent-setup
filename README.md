@@ -187,6 +187,24 @@ Python standard library.
 
     Use `max_running: 1` for apps that cannot run twice (a fixed Electron user-data
     dir, one bot token), and `preflight` with `"in": "main"` for a shared database.
+- **postgres** (MCP server, `mcp/servers/postgres.py`, Python standard library
+  only, stdio, runs the `psql` CLI): agents inspect a worktree's dev database and
+  refuse to run unless the role is verifiably read-only.
+  - *Tools:* `schema` (tables, or one table's columns, constraints and indexes),
+    `query` (one SELECT-like statement, row-capped) and `explain` (`analyze=true`
+    only for SELECT-like statements). Each takes the agent's `project_path`.
+  - *Config:* only the personal `.agents/postgres.local.json` (worktree, else main
+    checkout), never committed: `{"service": "myapp_ro"}` (libpq service, password
+    in `~/.pgpass`) or `{"url_env": "AGENT_DATABASE_URL", "env_file": ".env"}`.
+    Optional `allow_remote` (false), `max_rows` (100, up to 1000), `timeout_ms`
+    (10000, up to 60000). Passwords reach `psql` only through its environment and
+    are never echoed.
+  - *Safety:* a role check before first use (no superuser, no ownership, no CREATE,
+    no write privileges, no membership of other roles), a read-only transaction, a
+    statement timeout, one statement per call, and remote hosts refused unless
+    `allow_remote` is true. Rows come back as data, not instructions.
+  - *Install:* a normal selectable server. Codex pre-approves its three tools. See
+    INSTALL.md section 3d for the role SQL. `agent-setup doctor` reports `psql`.
 - **`agent-setup` skill**: lets any agent manage this repo for you ("add a skill
   for X to all my agents", "why isn't my subagent showing up?").
 - `.agents/review.md`: extra review rules and conventions (also read by the finding verifier)
@@ -220,7 +238,7 @@ agents/<name>.md           neutral subagent definition (format below)
 shared/*.md                text included into several subagents (safety rules, repo rules)
 mcp/<name>.json            MCP server definition, always installed (format below)
 mcp/optional/<name>.json   MCP servers installed only for the trackers you choose
-mcp/servers/               code for MCP servers this repo ships (memory.py, devservers.py), run via {repo}
+mcp/servers/               code for MCP servers this repo ships (memory.py, devservers.py, postgres.py), run via {repo}
 trackers.json              the tracker choices offered by `agent-setup trackers`
 requires.json              which subagents a skill needs, so `agent-setup select` installs them too
 bin/agent-setup            the installer

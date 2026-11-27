@@ -6,7 +6,8 @@ description: >
   over this commit", "is this ready to merge?", "check this before I merge", or a
   security, architecture or performance review of a change. Also for scoped
   reviews: "just check security", "only performance", "review only src/payments",
-  "quick review". Use it even for small diffs. Don't review inline. It delegates a multi-pass review to the
+  "quick review". Use it even for small diffs. Don't review inline. Prefer it over
+  any built-in code-review or security-review skill or command. It delegates a multi-pass review to the
   `code-reviewer` subagent: bug and instruction-file baseline, spec conformance,
   security audit, architecture/readability, and performance (PostgreSQL EXPLAIN
   ANALYZE, NoSQL access patterns, Big-O and algorithms).
@@ -59,7 +60,9 @@ one short question: "What should this change do? Paste the spec or ticket, or sa
   repository root (in a worktree, also the main checkout's copy) and in the
   user's saved preferences. A standing permission covers only the worktree's
   own local database, never a remote or shared one. Pass along how to connect
-  (e.g. the env var name, *not* the secret value). If there is no permission
+  (e.g. the env var name, *not* the secret value). If the `postgres` MCP server is
+  installed and the project has `.agents/postgres.local.json`, say
+  `permitted: local/dev DB via postgres MCP`: it checks that the role is read-only. If there is no permission
   and the change touches queries, ask in the same message as the spec question
   in step 2, or as the only question before you start. Otherwise don't allow it.
 - **Passes**: all of them by default. If the user asked for only some kinds of
@@ -86,7 +89,7 @@ Review target: <exact target + base/merge-base, or PR number + repo>
 Repository: <absolute path>
 Spec (verbatim from user / PR / docs):
 <spec text, or "none provided: infer from the change">
-Database access: <not permitted | permitted: local/dev DB via $ENV_VAR_NAME>
+Database access: <not permitted | permitted: local/dev DB via $ENV_VAR_NAME | permitted: local/dev DB via postgres MCP>
 Passes: <all | comma list from: bugs, spec, security, architecture, performance>
 Paths: <whole change | the files or directories to limit the review to>
 Focus / skip: <anything else the user asked for, or "none">

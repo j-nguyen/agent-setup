@@ -47,14 +47,16 @@ the feature. If the repo already keeps design docs somewhere else (`docs/design/
 file says where plans go, use that instead.
 
 **Plans from a ticket** are working documents: the ticket stays the durable
-record. Save them outside the repo, in the temp plans directory
-`${AGENT_PLANS_DIR:-/tmp/agent-plans}/<repo>/<ticket-id>-<slug>.md`, where
+record. Save them outside the repo, in the ticket plans directory
+`<plans root>/<repo>/<ticket-id>-<slug>.md`. Get `<plans root>` by running
+`echo "${AGENT_PLANS_DIR:-$HOME/.local/state/agent-plans}"` and use the
+absolute path it prints exactly; don't write a `~` path or assume the default. Here
 `<repo>` is the repository's directory name and the ticket ID is lowercase
 (`proj-123-bulk-export.md`). Any agent can fetch it from there later (the
 implement-plan skill and review mode look there). Use the repo's plans
 directory instead if the user asks to keep it in the repo, or the repo's rules
-say ticket plans go there. `/tmp` is cleared on reboot, so tell the user, and
-offer to copy the plan into the repo if they want to keep it.
+say ticket plans go there. Tell the user the path, and offer to copy the plan
+into the repo if they want it reviewed or kept with the code.
 
 ## Plan mode
 
@@ -116,15 +118,15 @@ Constraints and non-goals: <text, or "none stated">
 Answers to clarifying questions: <verbatim, or "none asked">
 Options the user chose: <verbatim, or "none stated">
 Vendor facts (checked by the coordinator): <fact + link, or "unverified: <fact>", or "none">
-Plan file: <absolute path: the plans directory, or the temp plans directory for a ticket; for a revision, the existing plan's path>
+Plan file: <absolute path: the plans directory, or the ticket plans directory for a ticket; for a revision, the existing plan's path>
 Revision: <the requested change, or "no: new plan">
 Write the plan to the plan file and return the summary from your instructions.
 ```
 
 Pick the plan file path before you brief (see "Where plans live"):
-`<plans dir>/<slug>.md`, the temp plans path for a ticket, or the existing
+`<plans dir>/<slug>.md`, the ticket plans path for a ticket, or the existing
 plan's path for a revision. If the user asked not to save files in the repo,
-use the temp plans directory too.
+use the ticket plans directory too.
 
 **For a new plan, create the plan file before you brief**, with your
 file-writing tool (which also creates the directory), containing exactly this
@@ -198,7 +200,7 @@ more times. For a revision, the file already exists, so skip this.
 ### 1. Find the plan
 
 Use the plan the user named. Otherwise look in the plans directory, and in the
-temp plans directory for this repo (see "Where plans live"), for one that
+ticket plans directory for this repo (see "Where plans live"), for one that
 matches the ticket ID, the branch name, the PR, or the feature the user mentioned. If several
 could match, ask which one. If none exists, say so and offer to write a plan
 first, or to run review-changes for a general review instead.

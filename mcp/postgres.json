@@ -1,0 +1,8 @@
+{
+  "$comment": "Read-only Postgres for a worktree's dev database (stdlib Python, stdio, runs the psql CLI). Config lives only in the personal .agents/postgres.local.json of each project; the server refuses a role that is not read-only. {repo} is this checkout, filled in at sync, so moving the repo needs a re-sync. Needs python3 and psql (12 or newer) on the agent's PATH. Codex pre-approves schema, query and explain; a future tool still prompts. No secrets.",
+  "command": "python3",
+  "args": ["{repo}/mcp/servers/postgres.py"],
+  "codex": {"tools": {"schema": {"approval_mode": "approve"},
+                      "query": {"approval_mode": "approve"},
+                      "explain": {"approval_mode": "approve"}}}
+}

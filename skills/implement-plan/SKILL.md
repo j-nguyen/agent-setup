@@ -32,8 +32,9 @@ mention them to the user.
 
 Use the plan the user named. Otherwise look in the plans directory
 (`docs/plans/`, or wherever `.agents/architecture.md`, `.agents/rules.md` or
-the repo's existing design docs say) and in the temp plans directory for
-ticket plans, `${AGENT_PLANS_DIR:-/tmp/agent-plans}/<repo directory name>/`,
+the repo's existing design docs say) and in the ticket plans directory for
+ticket plans, `<plans root>/<repo directory name>/`, where `<plans root>` is the path printed
+by `echo "${AGENT_PLANS_DIR:-$HOME/.local/state/agent-plans}"`,
 for one that matches the ticket ID, the branch name or the feature the user
 mentioned. If several could match, ask
 which one.
@@ -191,9 +192,12 @@ rewritten.
 
 You're the stronger model, so spend a little effort confirming the result
 before you relay it. Don't redo the implementation.
-- **Don't start verify-changes, another verification agent or the full suite
-  after the implementer.** Its report already covers lint, typecheck and
-  tests. Re-run only what failed, or what the report did not run.
+- **Don't start another verification agent or re-run the full suite after
+  the implementer.** Its report already covers lint, typecheck and tests, with
+  the commands and results. Run only the test files that cover the changed
+  files, once, if the report lists them. If a run fails and the report said it
+  passed, say so. Run the full suite yourself only if the report has no test
+  results, or the user asks.
 - **Send fixes back to the same implementer** (see "Continue the same
   implementer"). Don't edit the code yourself, unless the fix is one line and
   sending it back would cost more.
@@ -205,11 +209,6 @@ before you relay it. Don't redo the implementation.
 - Look for shortcuts in the diff: new lint baseline or suppression entries,
   `.skip` or `.only` in tests, deleted assertions. Send each one back to the
   implementer as a blocker to fix.
-- **Don't run the full test suite again.** The implementer already ran it,
-  and the report has the commands and results. Run only the test files that
-  cover the changed files, once, if the report lists them. If a run fails and
-  the report said it passed, say so. Run the full suite yourself only if the
-  report has no test results, or the user asks.
 - **Don't read the whole diff or the source.** Never run `git diff` without
   paths, and don't open files to "see the code". Run `git diff -- <path>` only
   for files a boundary rule or a decision (D-id) is about, or that the report

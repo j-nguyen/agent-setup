@@ -2,7 +2,7 @@
   "$comment": "Items an item needs. A selected skill also installs the subagents it starts. Keys and values are kind/name, for example skills/review-changes and agents/code-reviewer. Add a line here when a skill starts a new subagent.",
   "skills/debug-ticket": ["agents/debugger"],
   "skills/implement-plan": ["agents/implementer"],
-  "skills/plan-architecture": ["agents/architect", "agents/plan-reviewer"],
+  "skills/plan-architecture": ["agents/architect", "agents/plan-reviewer", "skills/debug-ticket"],
   "skills/record-feature": ["agents/browser-recorder"],
   "skills/review-changes": ["agents/code-reviewer", "agents/finding-verifier"]
 }

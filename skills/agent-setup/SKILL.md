@@ -32,11 +32,12 @@ the file formats.
 
 | User wants | Do |
 |---|---|
-| A new skill | `agent-setup new skill <name>`, write `skills/<name>/SKILL.md`, then validate + sync |
+| A new skill | `agent-setup new skill <name>`, write `skills/<name>/SKILL.md`, then validate + sync. If it starts a subagent, add that link to `requires.json` (e.g. `"skills/<name>": ["agents/<agent>"]`), and likewise if it reads another skill's files |
 | A new subagent | `agent-setup new agent <name>`, write `agents/<name>.md` (set `access:`), then validate + sync |
 | A new MCP server | `agent-setup new mcp <name>`, edit `mcp/<name>.json` (env var *names* only, never secret values), then validate + sync |
-| Change an existing one | edit its source file in the repo, then validate + sync |
-| Remove one | delete its source, then `agent-setup sync` (sync prunes what it installed) |
+| Change an existing one | edit its source file in the repo, then validate + sync. For an existing skill or subagent, run its evals (`python3 evals/run.py --cases …`, see `evals/README.md`) and compare with the previous results |
+| Remove one | confirm with the user first, naming what will be deleted. Then delete its source, remove its `requires.json` lines, and run `agent-setup sync` (sync prunes what it installed) |
+| Update from upstream | `git pull` in the repo, then validate, `sync --dry-run`, and sync. Tracker and item choices are kept; tell the user about any new items `sync` skipped |
 | Choose ticket trackers | ask the user which ones they use, then `agent-setup trackers --set github,jira` (or `none`), then sync |
 | Install only some items | ask which ones, then `agent-setup select --only a,b` (or `--skip a,b`), then sync. A skill also installs the subagents it needs (`requires.json`) |
 | Stop installing one item | `agent-setup select --remove <name>`, then sync. Sync removes only what it installed for that item |

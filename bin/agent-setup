@@ -1399,6 +1399,22 @@ def cmd_doctor(_args) -> int:
         print("  warn the devservers state is on a Windows drive under WSL (slow, file modes are not kept)\n"
               "         -> set DEVSERVERS_DIR to a path in your Linux home")
 
+    if any(s["name"] == "postgres" for s in servers):
+        print("Postgres")
+        psql = shutil.which("psql")
+        if not psql:
+            print("  info psql not on PATH (the postgres MCP server needs psql 12 or newer)")
+        else:
+            try:
+                v = subprocess.run([psql, "--version"], capture_output=True, text=True, timeout=10,
+                                   stdin=subprocess.DEVNULL).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                v = ""
+            m = re.search(r"(\d+)", v)
+            major = int(m.group(1)) if m else 0
+            note = "" if major >= 12 else "  (version 12 or newer needed for --csv)" if major else "  (version unknown)"
+            print(f"  info psql: {psql} {v or ''}{note}")
+
     print("Ticket trackers")
     cfg = load_user_config()
     if "trackers" not in cfg:

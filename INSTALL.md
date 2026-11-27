@@ -163,6 +163,59 @@ toolchain the project's commands use (node, bundle, uv, ...).
    that has it.
 5. Restart open agent sessions, then ask one to run `status` from a project.
 
+## 3d. Postgres (read-only)
+
+`sync` also installs a `postgres` MCP server (`mcp/servers/postgres.py`) in all three
+agents. It lets an agent look at a worktree's **development** database through the `psql`
+CLI (12 or newer; `agent-setup doctor` shows whether it is on PATH). It has no managed
+instruction block. A project that is not configured gets a `NOT CONFIGURED:` answer with
+these steps. Codex pre-approves `schema`, `query` and `explain`. Deselect it with
+`agent-setup select --remove postgres` if you do not want it.
+
+1. **Create a read-only role** on the dev database (never production). The server refuses
+   a role that can write:
+
+   ```sql
+   CREATE ROLE agent_ro LOGIN PASSWORD '<password>';
+   GRANT CONNECT ON DATABASE <database> TO agent_ro;
+   GRANT USAGE ON SCHEMA public TO agent_ro;
+   -- PostgreSQL 14 and newer:
+   GRANT pg_read_all_data TO agent_ro;
+   -- PostgreSQL 12 and 13 (repeat per schema; <owner> is the role that creates your tables):
+   GRANT SELECT ON ALL TABLES IN SCHEMA public TO agent_ro;
+   ALTER DEFAULT PRIVILEGES FOR ROLE <owner> IN SCHEMA public GRANT SELECT ON TABLES TO agent_ro;
+   -- PostgreSQL 14 and older let every role create objects in public (this affects all roles):
+   REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+   ```
+2. **Write the personal config** `.agents/postgres.local.json` in the worktree (or the main
+   checkout; not committed, list it in `.git/info/exclude`). Exactly one of:
+
+   ```json
+   {"service": "myapp_ro"}
+   ```
+   a libpq service from `~/.pg_service.conf`, with the password in `~/.pgpass`; or
+
+   ```json
+   {"url_env": "AGENT_DATABASE_URL", "env_file": ".env"}
+   ```
+   an environment variable that holds `postgres://agent_ro:<password>@localhost/<database>`,
+   looked up in `env_file` (default `.env`) of the worktree, then of the main checkout, then
+   in the process environment. Do not point it at the app's `DATABASE_URL`: that is
+   usually the owner role. Optional keys: `allow_remote` (default false: only a Unix socket,
+   `localhost`, `127.0.0.0/8` and `::1` are accepted), `max_rows` (100, up to 1000),
+   `timeout_ms` (10000, up to 60000). Unknown keys are refused. URL parameters other than
+   `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `connect_timeout`, `host` and `port` are
+   refused (`options` could undo the read-only settings).
+3. **Check it** from a terminal: `python3 mcp/servers/postgres.py check /path/to/worktree`
+   prints the resolved config, the host, the role check and the warnings below.
+4. Restart open agent sessions, then ask one to run `schema` from the project.
+
+**What the role check does not cover.** It checks the role, not everything the role can
+reach: SECURITY DEFINER functions owned by a role that can write, the `dblink` and
+`postgres_fdw` extensions, temporary tables (every role has TEMP on the database), and
+`set_config('statement_timeout', ...)` inside a query (the server kills `psql`, but the
+backend may keep running). Keep the dev database free of those, or do not use this server.
+
 ## 4. Verify
 
 ```sh

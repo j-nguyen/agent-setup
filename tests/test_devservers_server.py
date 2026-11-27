@@ -699,6 +699,27 @@ class EnvTests(DevCase):
         self.assertEqual(env["DEVSERVERS_SLOT"], "0")
         self.assertEqual(env["DEVSERVERS_WORKTREE"], str(self.repo))
 
+    def install_node(self, *versions: str) -> Path:
+        root = self.tmp / "home" / ".nvm" / "versions" / "node"
+        for v in versions:
+            (root / v / "bin").mkdir(parents=True)
+            (root / v / "bin" / "node").write_text("")
+        return root
+
+    def test_pinned_nvm_node_is_first_on_path(self):
+        root = self.install_node("v22.1.0", "v24.22.1", "v24.22.2", "v24.23.0")
+        (self.repo / ".nvmrc").write_text("24.22\n")
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+            env = self.run_env({})
+        self.assertEqual(env["PATH"], f"{root / 'v24.22.2' / 'bin'}:/usr/bin:/bin")
+
+    def test_path_is_unchanged_without_a_matching_node(self):
+        self.install_node("v22.1.0")
+        (self.repo / ".nvmrc").write_text("v24\n")
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+            env = self.run_env({})
+        self.assertEqual(env["PATH"], "/usr/bin:/bin")
+
     def test_worktree_gets_slot_port_and_compose_name(self):
         port = free_port()
         self.write_config({"ports": {"PORT": port}, "servers": {"dev": {"run": "true", "default": True}}},

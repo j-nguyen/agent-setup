@@ -965,6 +965,36 @@ def compose_name(ctx: Ctx, slot: int) -> str:
     return f"{repo}-wt{slot}"
 
 
+def nvm_node_bin(worktree: str, env: dict[str, str]) -> str | None:
+    """The bin of the newest installed nvm Node that matches the worktree's .nvmrc or .node-version."""
+    for name in (".nvmrc", ".node-version"):
+        try:
+            pin = (Path(worktree) / name).read_text().strip().removeprefix("v")
+        except OSError:
+            continue
+        break
+    else:
+        return None
+    # Aliases such as "lts/*" or "node" need nvm itself, so only numeric pins are resolved.
+    if not re.fullmatch(r"\d+(\.\d+){0,2}", pin):
+        return None
+    want = tuple(int(p) for p in pin.split("."))
+    nvm_dir = Path(env.get("NVM_DIR") or Path(env.get("HOME") or Path.home()) / ".nvm")
+    try:
+        entries = list((nvm_dir / "versions" / "node").iterdir())
+    except OSError:
+        return None
+    best: tuple[tuple[int, ...], Path] | None = None
+    for d in entries:
+        m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", d.name)
+        if not m:
+            continue
+        version = tuple(int(x) for x in m.groups())
+        if version[:len(want)] == want and (d / "bin" / "node").is_file() and (best is None or version > best[0]):
+            best = (version, d / "bin")
+    return str(best[1]) if best else None
+
+
 def build_env(ctx: Ctx, cfg: dict, slot: int, ports: dict[str, int],
               base: dict[str, str] | None = None) -> dict[str, str]:
     """Child env: server env minus built-ins and the config's own keys, plus env, slot and ports."""
@@ -980,6 +1010,10 @@ def build_env(ctx: Ctx, cfg: dict, slot: int, ports: dict[str, int],
     for k in list(env):
         if k in drop or k.startswith("DEVSERVERS_") or k.startswith("npm_"):
             del env[k]
+    # An agent started without a login shell has no nvm on PATH, so the project's pinned Node is put first.
+    node_bin = nvm_node_bin(ctx.worktree, env)
+    if node_bin:
+        env["PATH"] = node_bin + (os.pathsep + env["PATH"] if env.get("PATH") else "")
     env.update(cfg.get("env") or {})
     env["DEVSERVERS_SLOT"] = str(slot)
     env["DEVSERVERS_WORKTREE"] = ctx.worktree

@@ -32,7 +32,8 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")  # newest first
 SERVER_INFO = {"name": "postgres", "version": "1.0.0"}
 
 CONFIG_FILE = "postgres.local.json"
-CONFIG_KEYS = {"service", "url_env", "env_file", "allow_remote", "max_rows", "timeout_ms"}
+CONFIG_KEYS = {"service", "url_env", "env_file", "allow_remote", "max_rows", "timeout_ms", "role_check",
+               "worktree_env_only"}
 DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT = 100, 1000
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 10000, 60000
 CELL_CAP = 500
@@ -109,7 +110,8 @@ CONFIG_EXAMPLE = """\
 {"service": "myapp_ro"}                                  (libpq service; password in ~/.pgpass)
 or
 {"url_env": "AGENT_DATABASE_URL", "env_file": ".env"}    (URL in an env var or a .env file)
-Optional: "allow_remote" (false), "max_rows" (100, up to 1000), "timeout_ms" (10000, up to 60000)."""
+"env_file" may be a list, tried in order. Optional: "allow_remote" (false), "max_rows" (100, up to 1000),
+"timeout_ms" (10000, up to 60000), "role_check" (true), "worktree_env_only" (false)."""
 
 _NS = "n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'"
 _ROLES = ", ".join(f"'{r}'" for r in ALLOWED_ROLES)
@@ -210,10 +212,12 @@ class Config:
     path: Path
     service: str | None
     url_env: str | None
-    env_file: str
+    env_files: tuple[str, ...]
     allow_remote: bool
     max_rows: int
     timeout_ms: int
+    role_check: bool = True
+    worktree_env_only: bool = False
 
 
 def not_configured(problem: str, with_example: bool = True) -> ToolError:
@@ -246,15 +250,24 @@ def parse_config(data, path: Path) -> Config:
     if url_env is not None and not (isinstance(url_env, str) and ENV_KEY_RE.match(url_env)):
         raise not_configured(f"{path}: url_env must be an environment variable name", False)
     env_file = data.get("env_file", ".env")
-    if (not isinstance(env_file, str) or not env_file or os.path.isabs(env_file)
-            or ".." in Path(env_file).parts):
-        raise not_configured(f"{path}: env_file must be a relative path inside the project", False)
-    allow_remote = data.get("allow_remote", False)
-    if not isinstance(allow_remote, bool):
-        raise not_configured(f"{path}: allow_remote must be true or false", False)
-    return Config(path=path, service=service, url_env=url_env, env_file=env_file, allow_remote=allow_remote,
+    env_files = [env_file] if isinstance(env_file, str) else env_file
+    if (not isinstance(env_files, list) or not env_files
+            or any(not isinstance(f, str) or not f or os.path.isabs(f) or ".." in Path(f).parts
+                   for f in env_files)):
+        raise not_configured(f"{path}: env_file must be a relative path inside the project, or a non-empty "
+                             f"list of them", False)
+    flags = {}
+    for key, default in (("allow_remote", False), ("role_check", True), ("worktree_env_only", False)):
+        flags[key] = data.get(key, default)
+        if not isinstance(flags[key], bool):
+            raise not_configured(f"{path}: {key} must be true or false", False)
+    # Without the role check, the read-only transaction is the only guard, so it is kept to local databases.
+    if not flags["role_check"] and flags["allow_remote"]:
+        raise not_configured(f"{path}: role_check false is allowed only for a local database; remove "
+                             f"allow_remote", False)
+    return Config(path=path, service=service, url_env=url_env, env_files=tuple(dict.fromkeys(env_files)),
                   max_rows=_int_in(data, "max_rows", DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT, path),
-                  timeout_ms=_int_in(data, "timeout_ms", DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, path))
+                  timeout_ms=_int_in(data, "timeout_ms", DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, path), **flags)
 
 
 def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
@@ -364,21 +377,30 @@ def parse_env_file(path: Path) -> dict[str, str]:
 
 
 def lookup_url(project: Project, cfg: Config) -> str:
-    """env_file in the worktree, then in the main checkout, then the process environment."""
+    """Each env_file in the worktree, then in the main checkout, then the process environment.
+
+    With worktree_env_only, only the worktree's files: each worktree has its own database, and a value from the
+    main checkout or the shared process environment would point at another worktree's database.
+    """
     assert cfg.url_env is not None
-    for base in dict.fromkeys((project.worktree, project.root)):
-        val = parse_env_file(Path(base) / cfg.env_file).get(cfg.url_env)
+    bases = (project.worktree,) if cfg.worktree_env_only else tuple(dict.fromkeys((project.worktree, project.root)))
+    for base in bases:
+        for env_file in cfg.env_files:
+            val = parse_env_file(Path(base) / env_file).get(cfg.url_env)
+            if val:
+                problem = personal_file_problem(base, env_file) if cfg.allow_remote else None
+                if problem:
+                    raise not_configured(f"{problem}. With \"allow_remote\": true the database URL must not come "
+                                         f"from repo content; use a personal env_file or the process environment",
+                                         False)
+                return val
+    if not cfg.worktree_env_only:
+        val = os.environ.get(cfg.url_env)
         if val:
-            problem = personal_file_problem(base, cfg.env_file) if cfg.allow_remote else None
-            if problem:
-                raise not_configured(f"{problem}. With \"allow_remote\": true the database URL must not come from "
-                                     f"repo content; use a personal env_file or the process environment", False)
             return val
-    val = os.environ.get(cfg.url_env)
-    if val:
-        return val
-    raise not_configured(f"{cfg.url_env} is not set in {cfg.env_file} (worktree or main checkout) or the "
-                         f"environment", False)
+    where = f"the worktree {project.worktree}" if cfg.worktree_env_only else \
+        "the worktree or main checkout, or the environment"
+    raise not_configured(f"{cfg.url_env} is not set in {', '.join(cfg.env_files)} in {where}", False)
 
 
 # --------------------------------------------------------------------------- #
@@ -678,7 +700,7 @@ def open_session(project: Project, cfg: Config) -> Session:
         target, problems = parse_check(out)
         if not is_local_host(target.host) and not cfg.allow_remote:
             raise remote_error(target.host)  # before NOT READ-ONLY: no catalog details of a remote server
-        if problems:
+        if problems and cfg.role_check:
             raise not_read_only(target, problems)
         _CHECK_CACHE[key] = (time.monotonic() + CHECK_TTL, target)
     if not is_local_host(target.host) and not cfg.allow_remote:
@@ -1066,7 +1088,12 @@ def cli_check(path: str) -> int:
         print(str(e))
         return 1
     print(f"connected: db={s.target.db} role={s.target.label}")
-    print("role check: read-only")
+    if cfg.role_check:
+        print("role check: read-only")
+    else:
+        print("role check: off (role_check false). The read-only transaction is the only guard. A role that can "
+              "write can still call functions whose effects a rollback does not undo, such as "
+              "pg_terminate_backend, pg_cancel_backend, pg_reload_conf and the server file functions")
     try:
         out, _ = run_psql(cfg, s.conn, ["SELECT extname FROM pg_extension WHERE extname IN ('dblink', "
                                         "'postgres_fdw')"], "check")

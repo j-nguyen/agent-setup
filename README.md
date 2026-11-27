@@ -197,7 +197,8 @@ Python standard library.
     checkout), never committed: `{"service": "myapp_ro"}` (libpq service, password
     in `~/.pgpass`) or `{"url_env": "AGENT_DATABASE_URL", "env_file": ".env"}`.
     Optional `allow_remote` (false), `max_rows` (100, up to 1000), `timeout_ms`
-    (10000, up to 60000). Passwords reach `psql` only through its environment and
+    (10000, up to 60000), `role_check` (true; false accepts a role that can write,
+    local databases only), `worktree_env_only` (false). `env_file` can be a list. Passwords reach `psql` only through its environment and
     are never echoed.
   - *Safety:* a role check before first use (no superuser, no ownership, no CREATE,
     no write privileges, no membership of other roles), a read-only transaction, a

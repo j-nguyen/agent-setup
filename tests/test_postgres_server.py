@@ -175,6 +175,45 @@ class ConfigTests(Base):
                 pg.lookup_url(project, cfg)
 
 
+    def test_env_file_list_tried_in_order(self):
+        cfg = pg.parse_config({"url_env": "DBURL", "env_file": ["server/.env", ".agents/local.env"]}, Path("x"))
+        project = pg.resolve_project(str(self.proj))
+        (self.proj / ".agents" / "local.env").write_text("DBURL=postgres://local@h/db\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop("DBURL", None)
+            self.assertEqual(pg.lookup_url(project, cfg), "postgres://local@h/db")
+            (self.proj / "server").mkdir()
+            (self.proj / "server" / ".env").write_text("DBURL=postgres://server@h/db\n", encoding="utf-8")
+            self.assertEqual(pg.lookup_url(project, cfg), "postgres://server@h/db")
+
+    def test_env_file_list_refuses_bad_entries(self):
+        for env_file in ([], ["ok", "../x"], ["/etc/x"], [1]):
+            with self.assertRaises(pg.ToolError, msg=env_file):
+                pg.parse_config({"url_env": "DBURL", "env_file": env_file}, Path("x"))
+
+    def test_worktree_env_only_ignores_main_checkout_and_environment(self):
+        main = self.root / "main"
+        main.mkdir()
+        git(main, "init", "-q")
+        wt = self.root / "wt"
+        git(main, "worktree", "add", "-q", "--orphan", "-b", "feature", str(wt))
+        project = pg.resolve_project(str(wt))
+        cfg = pg.parse_config({"url_env": "DBURL", "worktree_env_only": True}, Path("x"))
+        (main / ".env").write_text("DBURL=postgres://main@h/db\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"DBURL": "postgres://env@h/db"}):
+            with self.assertRaises(pg.ToolError) as ctx:
+                pg.lookup_url(project, cfg)
+            self.assertIn(str(wt), str(ctx.exception))
+            (wt / ".env").write_text("DBURL=postgres://wt@h/db\n", encoding="utf-8")
+            self.assertEqual(pg.lookup_url(project, cfg), "postgres://wt@h/db")
+
+    def test_role_check_off_refused_with_allow_remote(self):
+        with self.assertRaises(pg.ToolError):
+            pg.parse_config({"service": "x", "role_check": False, "allow_remote": True}, Path("x"))
+        with self.assertRaises(pg.ToolError):
+            pg.parse_config({"service": "x", "role_check": "no"}, Path("x"))
+
+
 class ConnectionTests(Base):
     def test_url_maps_to_env_not_argv(self):
         (self.proj / ".env").write_text("DBURL=postgres://reader:s%40cret@localhost:5433/appdb?sslmode=require\n",
@@ -248,6 +287,29 @@ class RoleCheckTests(Base):
         self.assertIn("GRANT pg_read_all_data", text)
         self.assertEqual(len(self.calls()), 1)
         self.assertNotIn("BEGIN TRANSACTION READ ONLY", self.calls()[0]["cmds"])
+
+    def test_role_check_off_runs_owner_role_in_read_only_transaction(self):
+        self.config(service="svc", role_check=False)
+        self.set_stub([["\\echo", "localhost 5432\nkind,detail\ninfo,appdb owner\nproblem,role is superuser\n"],
+                       ["FETCH", "a\n1\n"]])
+        text, err = self.call("query", sql="select 1")
+        self.assertFalse(err, text)
+        query = self.calls()[-1]["cmds"]
+        self.assertEqual(query[0], "BEGIN TRANSACTION READ ONLY")
+        self.assertEqual(query[-1], "ROLLBACK")
+
+    def test_role_check_off_still_rejects_writes(self):
+        self.config(service="svc", role_check=False)
+        text, err = self.call("query", sql="delete from users")
+        self.assertTrue(err)
+        self.assertTrue(text.startswith("REJECTED:"), text)
+
+    def test_role_check_off_still_refuses_remote(self):
+        (self.proj / ".env").write_text("DBURL=postgres://u:p@db.example.com/x\n", encoding="utf-8")
+        self.config(url_env="DBURL", role_check=False)
+        text, err = self.call("query", sql="select 1")
+        self.assertTrue(text.startswith("REMOTE:"), text)
+        self.assertEqual(self.calls(), [])
 
     def test_check_runs_first_and_is_cached(self):
         self.config(service="svc")

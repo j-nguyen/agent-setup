@@ -203,7 +203,21 @@ these steps. Codex pre-approves `schema`, `query` and `explain`. Deselect it wit
    in the process environment. Do not point it at the app's `DATABASE_URL`: that is
    usually the owner role. Optional keys: `allow_remote` (default false: only a Unix socket,
    `localhost`, `127.0.0.0/8` and `::1` are accepted), `max_rows` (100, up to 1000),
-   `timeout_ms` (10000, up to 60000). Unknown keys are refused. URL parameters other than
+   `timeout_ms` (10000, up to 60000). Unknown keys are refused.
+
+   `env_file` can also be a list of files, tried in order in each place. Set
+   `worktree_env_only: true` when each worktree has its own database: then only the
+   worktree's files are read, never the main checkout's files or the process environment.
+
+   For a local dev database only, `role_check: false` lets the server use the app's own
+   role, for example `{"url_env": "DATABASE_URL", "env_file": ["server/.env",
+   ".agents/postgres.local.env"], "worktree_env_only": true, "role_check": false}`. The
+   server still runs the role check and still refuses remote hosts, but it does not refuse a
+   role that can write. Then the read-only transaction, the one-statement rule and the
+   SELECT-only rule are the only guards. A role that can write can still call functions
+   whose effects a rollback does not undo, such as `pg_terminate_backend`,
+   `pg_cancel_backend`, `pg_reload_conf` and the server file functions. `role_check: false`
+   cannot be combined with `allow_remote: true`. URL parameters other than
    `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `connect_timeout`, `host` and `port` are
    refused (`options` could undo the read-only settings).
 3. **Check it** from a terminal: `python3 mcp/servers/postgres.py check /path/to/worktree`

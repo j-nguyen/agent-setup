@@ -16,6 +16,7 @@ memory.py (project_root, slugify_path, ensure_dir, write_atomic, the JSON-RPC lo
 from __future__ import annotations
 
 import difflib
+import errno
 import hashlib
 import json
 import os
@@ -41,6 +42,11 @@ SERVER_INFO = {"name": "devservers", "version": "1.0.0"}
 
 SLOT_COUNT = 50  # slots 0-49; slot 0 is the main checkout
 LOCK_WAIT = 10.0
+OWNERLESS_LOCK_STALE = 10.0
+# A server can bind 127.0.0.1 or ::1 ("localhost" on macOS is ::1), so checks try both within one budget.
+LOOPBACK = ("127.0.0.1", "::1")
+PROBE_HOST_TIMEOUT = 1.0
+PROBE_BUDGET = 2.0
 PREFLIGHT_TIMEOUT = 30
 DEFAULT_STOP_TIMEOUT = 10
 DEFAULT_WAIT = 60
@@ -369,7 +375,7 @@ def _lock_stale(lock: Path) -> bool:
         owner = (lock / "owner").read_text(encoding="utf-8").split()
     except OSError:
         try:  # owner not written yet: only stale if the directory has been there a while
-            return now() - lock.stat().st_mtime > 5
+            return now() - lock.stat().st_mtime > OWNERLESS_LOCK_STALE
         except OSError:
             return False
     try:
@@ -389,8 +395,21 @@ def _break_lock(lock: Path) -> None:
     shutil.rmtree(stale, ignore_errors=True)
 
 
+_OWN_TOKEN: str | None = None
+
+
+def _own_token() -> str:
+    # `ps` can take seconds on a busy machine. Run it once, so the lock directory never waits for it
+    # without an owner file and looks stale to another caller.
+    global _OWN_TOKEN
+    if _OWN_TOKEN is None:
+        _OWN_TOKEN = start_token(os.getpid()) or "-"
+    return _OWN_TOKEN
+
+
 @contextmanager
 def project_lock(pdir: Path):
+    _own_token()
     ensure_dir(pdir)
     lock = pdir / "lock"
     deadline = time.monotonic() + LOCK_WAIT
@@ -407,7 +426,7 @@ def project_lock(pdir: Path):
             raise ToolError(f"could not get the project lock within {int(LOCK_WAIT)} s ({lock})")
         time.sleep(0.05)
     try:
-        (lock / "owner").write_text(f"{os.getpid()} {start_token(os.getpid()) or '-'}\n", encoding="utf-8")
+        (lock / "owner").write_text(f"{os.getpid()} {_own_token()}\n", encoding="utf-8")
         yield
     finally:
         shutil.rmtree(lock, ignore_errors=True)
@@ -964,12 +983,20 @@ def file_ports(ctx: Ctx, cfg: dict) -> dict[str, int]:
 
 
 def port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    for host in LOOPBACK:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
         try:
-            s.bind(("127.0.0.1", port))
-        except OSError:
-            return False
+            s = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:  # no IPv6 on this machine
+            continue
+        with s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, port))
+            except OSError as e:
+                if e.errno == errno.EADDRNOTAVAIL:  # family exists but this address does not
+                    continue
+                return False
     return True
 
 
@@ -1238,18 +1265,43 @@ def ready_port(port: int | str, rec: dict) -> int | None:
     return value if _is_int(value) and 0 < value < 65536 else None
 
 
+def _probe_timeouts():
+    """Per-host timeouts for one probe; stops when PROBE_BUDGET is spent."""
+    deadline = time.monotonic() + PROBE_BUDGET
+    for host in LOOPBACK:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        yield host, min(PROBE_HOST_TIMEOUT, left)
+
+
+def tcp_ready(port: int | None) -> bool:
+    if port is None:
+        return False
+    for host, timeout in _probe_timeouts():
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def http_ready(port: int | None, path: str) -> bool:
     if port is None:
         return False
-    conn = HTTPConnection("127.0.0.1", port, timeout=1)
-    try:
-        conn.request("GET", path)
-        with conn.getresponse() as reply:
-            return 200 <= reply.status < 400
-    except (OSError, HTTPException):
-        return False
-    finally:
-        conn.close()
+    for host, timeout in _probe_timeouts():
+        conn = HTTPConnection(host, port, timeout=timeout)
+        try:
+            conn.request("GET", path)
+            with conn.getresponse() as reply:
+                if 200 <= reply.status < 400:
+                    return True
+        except (OSError, HTTPException):
+            pass
+        finally:
+            conn.close()
+    return False
 
 
 def check_ready(ctx: Ctx, rec: dict) -> bool:
@@ -1277,15 +1329,7 @@ def check_ready(ctx: Ctx, rec: dict) -> bool:
                 save_record(cur, ctx)
         rec["captured"] = captured
     if ready.get("port") is not None:
-        port = ready_port(ready["port"], rec)
-        if port is None:
-            ok = False
-        else:
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=1):
-                    pass
-            except OSError:
-                ok = False
+        ok = ok and tcp_ready(ready_port(ready["port"], rec))
     return ok and all(http_ready(ready_port(probe["port"], rec), probe["path"])
                       for probe in ready.get("http", []))
 

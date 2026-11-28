@@ -636,6 +636,30 @@ class LockTests(DevCase):
             raise RuntimeError("x")
         self.assertFalse((pdir / "lock").exists())
 
+    def test_slow_ps_runs_once_and_not_while_the_lock_has_no_owner(self):
+        pdir = self.state / "p"
+        calls = []
+
+        def slow_token(pid):
+            calls.append(pid)
+            time.sleep(0.2)
+            return "tok"
+
+        with mock.patch.object(dev, "_OWN_TOKEN", None), mock.patch.object(dev, "start_token", slow_token):
+            for _ in range(2):
+                with dev.project_lock(pdir):
+                    self.assertEqual((pdir / "lock" / "owner").read_text(), f"{os.getpid()} tok\n")
+        self.assertEqual(calls, [os.getpid()])
+
+
+def ipv6_loopback() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
 
 @unittest.skipIf(sys.platform == "win32", "open-file limits are Unix only")
 class ZombieTests(unittest.TestCase):
@@ -977,6 +1001,48 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
     def test_wait_ready_unknown_instance(self):
         self.setup_trusted(self.server_cfg())
         self.assertIn("no instance", self.err("wait_ready"))
+
+    @unittest.skipUnless(ipv6_loopback(), "needs IPv6 loopback")
+    def test_server_on_ipv6_loopback_only_is_ready(self):
+        port = free_port()
+        code = """
+import os, socket
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+
+class V6(HTTPServer):
+    address_family = socket.AF_INET6
+
+V6(("::1", int(os.environ["PORT"])), Handler).serve_forever()
+"""
+        cfg = self.server_cfg(run=py(code), ready={"port": "PORT", "http": [{"port": "PORT", "path": "/health"}]})
+        cfg["ports"] = {"PORT": port}
+        self.setup_trusted(cfg)
+        self.jcall("start")
+        self.assertEqual(self.jcall("wait_ready", timeout_sec=15)["result"], "ready")
+
+    @unittest.skipUnless(ipv6_loopback(), "needs IPv6 loopback")
+    def test_port_held_on_ipv6_loopback_is_not_free(self):
+        port = free_port()
+        with socket.socket(socket.AF_INET6) as s:
+            s.bind(("::1", port))
+            s.listen()
+            self.assertFalse(dev.port_free(port))
+        self.assertTrue(dev.port_free(port))
+
+    def test_http_probe_gives_up_within_its_budget(self):
+        with socket.socket() as silent:  # accepts the connection but never answers
+            silent.bind(("127.0.0.1", 0))
+            silent.listen()
+            port = silent.getsockname()[1]
+            with mock.patch.object(dev, "PROBE_HOST_TIMEOUT", 0.3), mock.patch.object(dev, "PROBE_BUDGET", 0.4):
+                start = time.monotonic()
+                self.assertFalse(dev.http_ready(port, "/"))
+                self.assertLess(time.monotonic() - start, 0.8)
 
 
 class SetupTests(DevCase):
